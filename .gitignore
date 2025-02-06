@@ -1,0 +1,18 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+data/
+resources/
+result/
+visualization/
+
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+

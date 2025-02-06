@@ -1,0 +1,74 @@
+# train.py
+
+import os
+import tensorflow as tf
+from src.model.model import cnn_3d_model
+from src.loader.loader import DataGenerator
+from tensorflow.keras.callbacks import (ModelCheckpoint, EarlyStopping, ReduceLROnPlateau)
+
+def train_binary(train_dir, val_dir, model_save_path, best_model_path, batch_size, epochs):
+    # 1) Build the model
+    #    Input shape = (T, H, W, C), e.g. (15, 240, 320, 1)
+    model = cnn_3d_model(input_shape=(15, 240, 320, 1), num_classes=2)
+
+    # 2) Create data generators
+    train_gen = DataGenerator(
+        data_dir=train_dir,
+        batch_size=batch_size,
+        shuffle=True,
+        binary_all_leak=True
+    )
+    val_gen = DataGenerator(
+        data_dir=val_dir,
+        batch_size=batch_size,
+        shuffle=False,
+        binary_all_leak=True
+    )
+
+    # 3) Optional: Warmup execution on a single batch
+    #    This helps the model do a forward/backward pass so the graph is "built" and GPU is primed
+    try:
+        warmup_data, warmup_labels = next(iter(train_gen))
+        # Perform one forward+backward pass on that batch
+        model.train_on_batch(warmup_data, warmup_labels)
+        print("[INFO] Warmup pass completed.")
+    except StopIteration:
+        print("[WARNING] Train generator is empty. Skipping warmup.")
+
+    # 4) Define callbacks
+    checkpoint_cb = ModelCheckpoint(
+        filepath=best_model_path,
+        monitor='val_loss',
+        save_best_only=True,
+        verbose=1
+    )
+
+    earlystop_cb = EarlyStopping(
+        monitor='val_loss',
+        patience=10,
+        restore_best_weights=True,
+        verbose=1
+    )
+
+    lr_scheduler_cb = ReduceLROnPlateau(
+        monitor='val_loss',
+        factor=0.1,
+        patience=5,
+        verbose=1,
+        min_lr=1e-7
+    )
+
+    callbacks_list = [checkpoint_cb, earlystop_cb, lr_scheduler_cb]
+
+    # 5) Train
+    model.fit(
+        train_gen,
+        validation_data=val_gen,
+        epochs=epochs,
+        callbacks=callbacks_list
+    )
+
+    # 6) Save final model
+    model.save(model_save_path)
+    print(f"[INFO] Model saved to {model_save_path}")
+    print("[INFO] Best model (lowest val_loss) saved to", best_model_path)
