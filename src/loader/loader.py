@@ -125,5 +125,5 @@ class DataGenerator(Sequence):
         X_batch = np.array(X_list, dtype=np.float32)  # (B, T, H, W, C)
         y_batch = np.array(y_list, dtype=np.int32)
 
-        print(f"[DEBUG] Batch {idx} shape: {X_batch.shape}")  # Should be (batch_size, 15,240,320,1)
+        # print(f"[DEBUG] Batch {idx} shape: {X_batch.shape}")  # Should be (batch_size, 15,240,320,1)
         return X_batch, y_batch
