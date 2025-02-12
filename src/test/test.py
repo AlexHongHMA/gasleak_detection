@@ -241,8 +241,8 @@ def test_binary(test_dir, model_path, batch_size, output_base_dir="./result"):
     evaluate_all_leak_vs_no_leak(model_path, test_dir, batch_size, output_dir)
 
     print("\n_______ 10-Fold testing for each leak class vs no-leak _______")
-    # final_results  = evaluate_per_leak_class(model_path, test_dir, batch_size, output_dir)
+    final_results  = evaluate_per_leak_class(model_path, test_dir, batch_size, output_dir)
 
     # Generate final table
-    # print("\n_______ Generating final table _______")
-    # generate_final_table(final_results, output_dir)
+    print("\n_______ Generating final table _______")
+    generate_final_table(final_results, output_dir)
