@@ -144,12 +144,6 @@ def process_video(
     # 7. Loop over the 8 segments (class labels 0..7)
     for class_label in range(total_segments):
 
-        # if class_label == 0: 
-        #     chunk_start_sec = excel_start_sec + class_label*segment_length_sec
-        # else:
-        #     chunk_start_sec = chunk_end_sec_prev 
-        # chunk_end_sec   = chunk_start_sec + segment_length_sec
-
         # Each class => 3 min chunk
         chunk_start_sec = excel_start_sec + class_label * segment_length_sec
         chunk_end_sec   = chunk_start_sec + segment_length_sec
@@ -267,3 +261,5 @@ def process_video(
 
     cap.release()
     print("[DONE] Finished processing video:", video_name)
+
+
