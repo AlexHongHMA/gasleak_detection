@@ -59,7 +59,8 @@ def evaluate_all_leak_vs_no_leak(model_path, test_dir, batch_size, output_dir):
         data_dir=test_dir,
         batch_size=batch_size,
         shuffle=False,
-        binary_all_leak=True  # merges classes [1..7] => label=1, class 0 => 0
+        binary_all_leak=True,
+        balance_classes=True  # Enable class balancing
     )   
 
     total_batches = len(test_gen)
@@ -107,89 +108,67 @@ def evaluate_all_leak_vs_no_leak(model_path, test_dir, batch_size, output_dir):
 
 def evaluate_per_leak_class(model_path, test_dir, batch_size, output_dir):
     """
-    Perform 10-fold testing for each leak class vs. no leak (0) and generate final table.
+    Perform 10-fold testing for each leak class vs. no leak (0..k).
+    Only saves the final accuracy table.
     """
     print("[INFO] Evaluate each leak class vs. no-leak (0), with 10-fold testing...")
-    
-    # Load model once
-    model = cnn_3d_model(input_shape=(15, 240, 320, 1), num_classes=2)
-    model.load_weights(model_path)
-    
-    # Dictionary to store results for final table
-    final_results = {i: [] for i in range(1, 8)}  # Keys: 1-7 (leak classes)
-    
+
+    # Build a single model & load weights once
+    base_model = cnn_3d_model(input_shape=(15, 240, 320, 1), num_classes=2)
+    base_model.load_weights(model_path)
+
+    final_results = {i: [] for i in range(1, 8)}  # Store accuracies for each class
+
     for leak_class in range(1, 8):
         print(f"\n--- 0 vs {leak_class} (10-fold) ---")
         
-        # 1) Get all test files for classes 0 and leak_class
-        test_files = []
-        test_labels = []
-        for class_label in [0, leak_class]:
-            class_dir = os.path.join(test_dir, str(class_label))
-            if not os.path.exists(class_dir):
-                continue
-            for fname in os.listdir(class_dir):
-                if fname.endswith('.npz'):
-                    test_files.append(os.path.join(class_dir, fname))
-                    test_labels.append(0 if class_label == 0 else 1)
-        
-        if len(test_files) == 0:
-            print(f"Skipping 0 vs {leak_class} - no data.")
-            final_results[leak_class] = [0.0] * 10  # Handle missing data
+        # Create balanced generator for this leak class
+        temp_gen = DataGenerator(
+            data_dir=test_dir,
+            batch_size=batch_size,
+            shuffle=False,
+            binary_all_leak=False,
+            binary_pair=(0, leak_class),
+            balance_classes=True
+        )
+
+        if len(temp_gen.filepaths) == 0:
+            print(f"Skipping 0 vs {leak_class} - no data found.")
             continue
-            
-        # 2) Convert to numpy arrays for KFold splitting
-        test_files = np.array(test_files)
-        test_labels = np.array(test_labels)
-        
-        # 3) 10-fold cross-validation
+
+        # 10-fold cross-validation
         kf = KFold(n_splits=10, shuffle=True, random_state=42)
         fold_accuracies = []
         
-        for fold_i, (_, test_idx) in enumerate(kf.split(test_files)):
+        for fold_i, (_, test_idx) in enumerate(kf.split(temp_gen.filepaths)):
             # Get fold-specific test data
-            fold_files = test_files[test_idx]
-            fold_labels = test_labels[test_idx]
+            fold_files = [temp_gen.filepaths[i] for i in test_idx]
             
-            # Create DataGenerator for this fold with explicit file list
             fold_gen = DataGenerator(
                 data_dir=test_dir,
                 batch_size=batch_size,
                 shuffle=False,
                 binary_all_leak=False,
                 binary_pair=(0, leak_class),
-                explicit_files=fold_files.tolist()
+                explicit_files=fold_files,
+                balance_classes=True
             )
             
-            # Batch-safe evaluation
             y_true, y_pred = [], []
             for X_batch, y_batch in fold_gen:
-                if len(X_batch) == 0:  # Skip empty batches
+                if len(X_batch) == 0:
                     break
-                preds = model.predict(X_batch, verbose=0)
+                preds = base_model.predict(X_batch, verbose=0)
                 y_pred.extend(preds.argmax(axis=-1))
                 y_true.extend(y_batch)
-                
-            # Calculate fold accuracy
-            if len(y_true) > 0:  # Handle edge case of empty fold
+            
+            if len(y_true) > 0:
                 acc = accuracy_score(y_true, y_pred)
-            else:
-                acc = 0.0
-                print(f"[WARNING] Empty fold {fold_i+1} for 0 vs {leak_class}")
-            
-            fold_accuracies.append(acc)
-            print(f"Fold {fold_i+1}/10 | Accuracy: {acc:.4f}")
-            
-            # Save fold results
-            fold_dir = os.path.join(output_dir, f'class_{leak_class}', f'fold_{fold_i+1}')
-            os.makedirs(fold_dir, exist_ok=True)
-            save_confusion_matrix(y_true, y_pred, ['No Leak', f'Leak {leak_class}'], fold_dir)
-            save_classification_report(y_true, y_pred, fold_dir)
+                fold_accuracies.append(acc)
+                print(f"Fold {fold_i+1}/10 | Accuracy: {acc:.4f}")
         
-        # Store results for final table
+        # Store and print class summary
         final_results[leak_class] = fold_accuracies
-        
-        # Print class summary
         mean_acc = np.mean(fold_accuracies)
         std_acc = np.std(fold_accuracies)
         print(f"\n0 vs {leak_class} | Mean Accuracy: {mean_acc:.4f} ± {std_acc:.4f}")
@@ -226,23 +205,38 @@ def generate_final_table(final_results, output_dir):
     
     print(f"\nFinal table saved to: {table_filename}")
 
-def test_binary(test_dir, model_path, batch_size, output_base_dir="./result"):
+def test_binary(test_dir, model_path, batch_size, output_base_dir="./result", method_name="unknown"):
     """
     Master function to test the binary model in 2 ways:
      1) all leak vs. no leak
      2) 10-fold each leak class vs. no leak
     Called from main.py
     """
-    # Create timestamped output directory
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = os.path.join(output_base_dir, timestamp)
+    # Create method-specific output directory
+    output_dir = os.path.join(output_base_dir, method_name)
+    os.makedirs(output_dir, exist_ok=True)
 
-    # print("_______ Testing all leaks vs no-leak _______")
-    evaluate_all_leak_vs_no_leak(model_path, test_dir, batch_size, output_dir)
+    # Create subdirectories for different tests
+    all_leak_dir = os.path.join(output_dir, "all_leak_test")
+    fold_test_dir = os.path.join(output_dir, "10fold_test")
+    os.makedirs(all_leak_dir, exist_ok=True)
+    os.makedirs(fold_test_dir, exist_ok=True)
 
-    print("\n_______ 10-Fold testing for each leak class vs no-leak _______")
-    final_results  = evaluate_per_leak_class(model_path, test_dir, batch_size, output_dir)
+    print(f"\n_______ Testing all leaks vs no-leak for {method_name} _______")
+    evaluate_all_leak_vs_no_leak(model_path, test_dir, batch_size, all_leak_dir)
+
+    print(f"\n_______ 10-Fold testing for each leak class vs no-leak for {method_name} _______")
+    final_results = evaluate_per_leak_class(model_path, test_dir, batch_size, fold_test_dir)
 
     # Generate final table
-    print("\n_______ Generating final table _______")
+    print(f"\n_______ Generating final table for {method_name} _______")
     generate_final_table(final_results, output_dir)
+
+    # Create a summary file
+    summary_path = os.path.join(output_dir, f"{method_name}_test_summary.txt")
+    with open(summary_path, 'w') as f:
+        f.write(f"Test Summary for {method_name}\n")
+        f.write("================================\n\n")
+        f.write(f"All leak vs no-leak results: {all_leak_dir}\n")
+        f.write(f"10-fold test results: {fold_test_dir}\n")
+        f.write(f"Final table location: {output_dir}\n")
