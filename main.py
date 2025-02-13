@@ -55,12 +55,12 @@ def save_preprocessing_benchmark(method_name, benchmark_results, benchmark_dir):
 def main():
     # Create all necessary directories
     required_dirs = [
-        "./result/benchmark",
-        "./result/exe_time",
-        "./result/binary",
-        "./result/binary_mog2",
-        "./result/best_model",
-        "./result/best_model_mog2",
+        "./result/benchmark/data_aug",
+        "./result/exe_time/data_aug",
+        "./result/binary/data_aug",
+        "./result/binary_mog2/data_aug",
+        "./result/best_model/data_aug",
+        "./result/best_model_mog2/data_aug",
         "./data/processed/train",
         "./data/processed/val",
         "./data/processed/test",
@@ -82,8 +82,8 @@ def main():
     ]
 
     # Define directory variables
-    exe_time_dir = "./result/exe_time"
-    benchmark_dir = "./result/benchmark"
+    exe_time_dir = "./result/exe_time/data_aug"
+    benchmark_dir = "./result/benchmark/data_aug"
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     # Common parameters
@@ -93,82 +93,82 @@ def main():
     xlss_path = "./resources/GasVid_Logging_File.xlsx"
     output_dir = "./data/processed_mog2"
 
-    # Process videos with Moving Average
-    print("\n====== Moving Average Background Subtraction ======")
-    mvag_benchmark_results = []
-    mvag_start_time = time.time()  # Start timing entire Moving Average process
+    # # Process videos with Moving Average
+    # print("\n====== Moving Average Background Subtraction ======")
+    # mvag_benchmark_results = []
+    # mvag_start_time = time.time()  # Start timing entire Moving Average process
     
-    for single_video_path in video_paths:
-        video_name = os.path.basename(single_video_path)
-        print(f"\nProcessing video with Moving Average: {video_name}")
+    # for single_video_path in video_paths:
+    #     video_name = os.path.basename(single_video_path)
+    #     print(f"\nProcessing video with Moving Average: {video_name}")
         
-        start_time = time.time()
-        MOG2_process_video(single_video_path, xlss_path, output_dir)
-        end_time = time.time()
+    #     start_time = time.time()
+    #     MOG2_process_video(single_video_path, xlss_path, output_dir)
+    #     end_time = time.time()
         
-        processing_time = end_time - start_time
-        fps = os.path.getsize(single_video_path) / (1024*1024) / processing_time
+    #     processing_time = end_time - start_time
+    #     fps = os.path.getsize(single_video_path) / (1024*1024) / processing_time
         
-        mvag_benchmark_results.append({
-            'video_name': video_name,
-            'size_mb': os.path.getsize(single_video_path) / (1024*1024),
-            'processing_time_sec': processing_time,
-            'processing_speed_mbs': fps
-        })
+    #     mvag_benchmark_results.append({
+    #         'video_name': video_name,
+    #         'size_mb': os.path.getsize(single_video_path) / (1024*1024),
+    #         'processing_time_sec': processing_time,
+    #         'processing_speed_mbs': fps
+    #     })
         
-        # Save interim results after each video
-        save_preprocessing_benchmark('MovingAverage', mvag_benchmark_results, benchmark_dir)
+    #     # Save interim results after each video
+    #     save_preprocessing_benchmark('MovingAverage', mvag_benchmark_results, benchmark_dir)
     
-    mvag_total_time = time.time() - mvag_start_time  # Calculate total time including overhead
+    # mvag_total_time = time.time() - mvag_start_time  # Calculate total time including overhead
 
-    # Process videos with MOG2
-    print("\n====== MOG2 Background Subtraction ======")
-    mog2_benchmark_results = []
-    mog2_start_time = time.time()  # Start timing entire MOG2 process
+    # # Process videos with MOG2
+    # print("\n====== MOG2 Background Subtraction ======")
+    # mog2_benchmark_results = []
+    # mog2_start_time = time.time()  # Start timing entire MOG2 process
     
-    for single_video_path in video_paths:
-        video_name = os.path.basename(single_video_path)
-        print(f"\nProcessing video with MOG2: {video_name}")
+    # for single_video_path in video_paths:
+    #     video_name = os.path.basename(single_video_path)
+    #     print(f"\nProcessing video with MOG2: {video_name}")
         
-        start_time = time.time()
-        MOG2_process_video(single_video_path, xlss_path, output_dir)
-        end_time = time.time()
+    #     start_time = time.time()
+    #     MOG2_process_video(single_video_path, xlss_path, output_dir)
+    #     end_time = time.time()
         
-        processing_time = end_time - start_time
-        fps = os.path.getsize(single_video_path) / (1024*1024) / processing_time
+    #     processing_time = end_time - start_time
+    #     fps = os.path.getsize(single_video_path) / (1024*1024) / processing_time
         
-        mog2_benchmark_results.append({
-            'video_name': video_name,
-            'size_mb': os.path.getsize(single_video_path) / (1024*1024),
-            'processing_time_sec': processing_time,
-            'processing_speed_mbs': fps
-        })
+    #     mog2_benchmark_results.append({
+    #         'video_name': video_name,
+    #         'size_mb': os.path.getsize(single_video_path) / (1024*1024),
+    #         'processing_time_sec': processing_time,
+    #         'processing_speed_mbs': fps
+    #     })
         
-        # Save interim results after each video
-        save_preprocessing_benchmark('MOG2', mog2_benchmark_results, benchmark_dir)
+    #     # Save interim results after each video
+    #     save_preprocessing_benchmark('MOG2', mog2_benchmark_results, benchmark_dir)
     
-    mog2_total_time = time.time() - mog2_start_time  # Calculate total time including overhead
+    # mog2_total_time = time.time() - mog2_start_time  # Calculate total time including overhead
 
-    # Save overall comparison with actual total times
-    comparison_path = os.path.join(benchmark_dir, 'preprocessing_comparison.txt')
-    with open(comparison_path, 'w') as f:
-        f.write("Background Subtraction Methods Comparison\n")
-        f.write("=======================================\n\n")
-        f.write("Moving Average Method:\n")
-        f.write(f"Total Processing Time (including overhead): {mvag_total_time:.2f} seconds\n")
-        f.write(f"Pure Processing Time (sum of videos): {sum(r['processing_time_sec'] for r in mvag_benchmark_results):.2f} seconds\n")
-        f.write(f"Average Time per Video: {mvag_total_time/len(video_paths):.2f} seconds\n\n")
+    # # Save overall comparison with actual total times
+    # comparison_path = os.path.join(benchmark_dir, 'preprocessing_comparison.txt')
+    # with open(comparison_path, 'w') as f:
+    #     f.write("Background Subtraction Methods Comparison\n")
+    #     f.write("=======================================\n\n")
+    #     f.write("Moving Average Method:\n")
+    #     f.write(f"Total Processing Time (including overhead): {mvag_total_time:.2f} seconds\n")
+    #     f.write(f"Pure Processing Time (sum of videos): {sum(r['processing_time_sec'] for r in mvag_benchmark_results):.2f} seconds\n")
+    #     f.write(f"Average Time per Video: {mvag_total_time/len(video_paths):.2f} seconds\n\n")
         
-        f.write("MOG2 Method:\n")
-        f.write(f"Total Processing Time (including overhead): {mog2_total_time:.2f} seconds\n")
-        f.write(f"Pure Processing Time (sum of videos): {sum(r['processing_time_sec'] for r in mog2_benchmark_results):.2f} seconds\n")
-        f.write(f"Average Time per Video: {mog2_total_time/len(video_paths):.2f} seconds\n\n")
+    #     f.write("MOG2 Method:\n")
+    #     f.write(f"Total Processing Time (including overhead): {mog2_total_time:.2f} seconds\n")
+    #     f.write(f"Pure Processing Time (sum of videos): {sum(r['processing_time_sec'] for r in mog2_benchmark_results):.2f} seconds\n")
+    #     f.write(f"Average Time per Video: {mog2_total_time/len(video_paths):.2f} seconds\n\n")
         
-        f.write("\nTime Difference:\n")
-        f.write(f"Absolute: {abs(mvag_total_time - mog2_total_time):.2f} seconds\n")
-        f.write(f"Relative: {abs(mvag_total_time - mog2_total_time)/min(mvag_total_time, mog2_total_time)*100:.2f}%\n")
+    #     f.write("\nTime Difference:\n")
+    #     f.write(f"Absolute: {abs(mvag_total_time - mog2_total_time):.2f} seconds\n")
+    #     f.write(f"Relative: {abs(mvag_total_time - mog2_total_time)/min(mvag_total_time, mog2_total_time)*100:.2f}%\n")
     
-    print(f"\n[INFO] Method comparison saved to {comparison_path}")
+    # print(f"\n[INFO] Method comparison saved to {comparison_path}")
 
     # Moving Average method
     print("\n====== Moving Average Background Subtraction Method ======")
@@ -177,8 +177,9 @@ def main():
     mvag_train_dir = "./data/processed/train"
     mvag_val_dir = "./data/processed/val"
     mvag_test_dir = "./data/processed/test"
-    mvag_model_path = "./result/binary/cnn_3d_binaryAllLeak.keras"
-    mvag_best_model_path = "./result/best_model/cnn_3d_binaryAllLeak.keras"
+
+    mvag_model_path = "./result/binary/data_aug/cnn_3d_binaryAllLeak.keras"
+    mvag_best_model_path = "./result/best_model/data_aug/cnn_3d_binaryAllLeak.keras"
 
     try:
         # Moving Average Training
@@ -199,7 +200,7 @@ def main():
             test_dir=mvag_test_dir, 
             model_path=mvag_best_model_path, 
             batch_size=batch_size,
-            output_base_dir="./result/moving_average",
+            output_base_dir="./result/moving_average/data_aug",
             method_name="moving_average"
         )
         mvag_test_duration = time.time() - mvag_test_start
@@ -212,8 +213,9 @@ def main():
     mog2_train_dir = "./data/processed_mog2/train"
     mog2_val_dir = "./data/processed_mog2/val"
     mog2_test_dir = "./data/processed_mog2/test"
-    mog2_model_path = "./result/binary_mog2/cnn_3d_binaryAllLeak.keras"
-    mog2_best_model_path = "./result/best_model_mog2/cnn_3d_binaryAllLeak.keras"
+    
+    mog2_model_path = "./result/binary_mog2/data_aug/cnn_3d_binaryAllLeak.keras"
+    mog2_best_model_path = "./result/best_model_mog2/data_aug/cnn_3d_binaryAllLeak.keras"
 
     try:
         # MOG2 Training
@@ -234,7 +236,7 @@ def main():
             test_dir=mog2_test_dir, 
             model_path=mog2_best_model_path, 
             batch_size=batch_size,
-            output_base_dir="./result/mog2",
+            output_base_dir="./result/mog2/data_aug",
             method_name="mog2"
         )
         mog2_test_duration = time.time() - mog2_test_start
