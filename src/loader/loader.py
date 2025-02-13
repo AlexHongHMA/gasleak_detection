@@ -13,57 +13,60 @@ import math
 
 
 class DataGenerator(Sequence):
-    def __init__(self, data_dir, batch_size=16, shuffle=True, binary_all_leak=True, binary_pair=None, explicit_files=None):
+    def __init__(self, data_dir, batch_size=16, shuffle=True, binary_all_leak=True, binary_pair=None, explicit_files=None, balance_classes=True):
         self.data_dir = data_dir
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.binary_all_leak = binary_all_leak
         self.binary_pair = binary_pair
+        self.balance_classes = balance_classes
         self.filepaths = []
 
-        # Validate directory structure
-        if not os.path.exists(data_dir):
-            raise ValueError(f"Data directory {data_dir} does not exist!")
-        
+        # Handle explicit files differently since they're already tuples of (path, label)
         if explicit_files is not None:
-            # Directly use provided files (for fold-specific loading)
-            self.filepaths = []
-            for path in explicit_files:
-                class_label = int(os.path.basename(os.path.dirname(path)))
-                self.filepaths.append((path, class_label))
+            self.filepaths = explicit_files  # These are already (path, label) tuples
         else:
-        # Collect all .npz in subfolders 0..7
+            # Collect all .npz files in subfolders 0..7
             for class_label_str in sorted(os.listdir(data_dir)):
                 subdir = os.path.join(data_dir, class_label_str)
                 if not os.path.isdir(subdir):
-                    print(f"[WARNING] Skipping non-directory: {subdir}")
                     continue
                 try:
                     class_label = int(class_label_str)
                 except:
-                    print(f"[WARNING] Invalid class folder name: {class_label_str}")
                     continue
 
                 if self.binary_all_leak:
-                    if class_label < 0 or class_label > 7:  # Only allow classes 0 (no-leak) and 1-7 (leak)
+                    if class_label < 0 or class_label > 7:
                         continue
-
                 elif self.binary_pair is not None:
-                    if class_label not in self.binary_pair:  # e.g. (0,3) => only keep if label=0 or label=3
+                    if class_label not in self.binary_pair:
                         continue
 
                 for fname in os.listdir(subdir):
                     if fname.endswith('.npz'):
                         self.filepaths.append((os.path.join(subdir, fname), class_label))
 
-        # After collecting filepaths, check how many valid files were loaded
-        if len(self.filepaths) == 0:
-            raise RuntimeError(f"No valid .npz files found in {data_dir} "
-                            f"with binary_all_leak={binary_all_leak}, "
-                            f"binary_pair={binary_pair}")
-
-        print(f"[INFO] Loaded {len(self.filepaths)} samples "
-              f"(binary_all_leak={binary_all_leak})")
+        # Separate no-leak and leak files
+        self.no_leak_files = [(p, l) for p, l in self.filepaths if l == 0]
+        self.leak_files = [(p, l) for p, l in self.filepaths if l != 0]
+        
+        if self.balance_classes:
+            # Balance classes by undersampling the majority class
+            min_samples = min(len(self.no_leak_files), len(self.leak_files))
+            if len(self.no_leak_files) > min_samples:
+                indices = np.random.choice(len(self.no_leak_files), min_samples, replace=False)
+                self.no_leak_files = [self.no_leak_files[i] for i in indices]
+            if len(self.leak_files) > min_samples:
+                indices = np.random.choice(len(self.leak_files), min_samples, replace=False)
+                self.leak_files = [self.leak_files[i] for i in indices]
+            
+            # Combine balanced files
+            self.filepaths = self.no_leak_files + self.leak_files
+            
+        print(f"[INFO] Class distribution after balancing:")
+        print(f"  No leak (0): {len(self.no_leak_files)} samples")
+        print(f"  Leak (1-7): {len(self.leak_files)} samples")
 
         self.on_epoch_end()
 
