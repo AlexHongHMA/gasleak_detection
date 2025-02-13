@@ -17,30 +17,32 @@ def train_binary(train_dir, val_dir, model_save_path, best_model_path, batch_siz
         batch_size=batch_size,
         shuffle=True,
         binary_all_leak=True,
-        balance_classes=True  # Enable class balancing
+        balance_classes=True,  # Enable class balancing
+        training=True  # Set to True for training
     )
     val_gen = DataGenerator(
         data_dir=val_dir,
         batch_size=batch_size,
         shuffle=False,
         binary_all_leak=True,
-        balance_classes=True  # Enable class balancing
+        balance_classes=True,  # Enable class balancing
+        training=False  # Set to False for validation
     )
 
-    # Calculate class weights
-    no_leak_samples = sum(1 for path, label in train_gen.filepaths if label == 0)
-    leak_samples = sum(1 for path, label in train_gen.filepaths if label != 0)
-    total_samples = no_leak_samples + leak_samples
+    # # Calculate class weights
+    # no_leak_samples = sum(1 for path, label in train_gen.filepaths if label == 0)
+    # leak_samples = sum(1 for path, label in train_gen.filepaths if label != 0)
+    # total_samples = no_leak_samples + leak_samples
     
-    class_weights = {
-        0: total_samples / (2 * no_leak_samples),
-        1: total_samples / (2 * leak_samples)
-    }
+    # class_weights = {
+    #     0: total_samples / (2 * no_leak_samples),
+    #     1: total_samples / (2 * leak_samples)
+    # }
     
-    print(f"[INFO] Class distribution:")
-    print(f"  No leak (0): {no_leak_samples} samples")
-    print(f"  Leak (1): {leak_samples} samples")
-    print(f"[INFO] Using class weights: {class_weights}")
+    # print(f"[INFO] Class distribution:")
+    # print(f"  No leak (0): {no_leak_samples} samples")
+    # print(f"  Leak (1): {leak_samples} samples")
+    # print(f"[INFO] Using class weights: {class_weights}")
 
     # 3) Optional: Warmup execution on a single batch
     #    This helps the model do a forward/backward pass so the graph is "built" and GPU is primed
@@ -83,7 +85,6 @@ def train_binary(train_dir, val_dir, model_save_path, best_model_path, batch_siz
         validation_data=val_gen,
         epochs=epochs,
         callbacks=callbacks_list,
-        class_weight=class_weights,
         verbose=1
     )
 
