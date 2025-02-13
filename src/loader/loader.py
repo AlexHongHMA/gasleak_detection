@@ -10,10 +10,11 @@ from tensorflow.keras.callbacks import (EarlyStopping,
                                         ReduceLROnPlateau,
                                         ModelCheckpoint)
 import math
+from src.augmentation.video_augment import VideoAugmenter
 
 
 class DataGenerator(Sequence):
-    def __init__(self, data_dir, batch_size=16, shuffle=True, binary_all_leak=True, binary_pair=None, explicit_files=None, balance_classes=True):
+    def __init__(self, data_dir, batch_size=16, shuffle=True, binary_all_leak=True, binary_pair=None, explicit_files=None, balance_classes=True, training=True):
         self.data_dir = data_dir
         self.batch_size = batch_size
         self.shuffle = shuffle
@@ -21,6 +22,8 @@ class DataGenerator(Sequence):
         self.binary_pair = binary_pair
         self.balance_classes = balance_classes
         self.filepaths = []
+        self.augmenter = VideoAugmenter(p=0.5)
+        self.training = training  # Add this flag
 
         # Handle explicit files differently since they're already tuples of (path, label)
         if explicit_files is not None:
@@ -51,15 +54,17 @@ class DataGenerator(Sequence):
         self.no_leak_files = [(p, l) for p, l in self.filepaths if l == 0]
         self.leak_files = [(p, l) for p, l in self.filepaths if l != 0]
         
-        if self.balance_classes:
-            # Balance classes by undersampling the majority class
-            min_samples = min(len(self.no_leak_files), len(self.leak_files))
-            if len(self.no_leak_files) > min_samples:
-                indices = np.random.choice(len(self.no_leak_files), min_samples, replace=False)
-                self.no_leak_files = [self.no_leak_files[i] for i in indices]
-            if len(self.leak_files) > min_samples:
-                indices = np.random.choice(len(self.leak_files), min_samples, replace=False)
-                self.leak_files = [self.leak_files[i] for i in indices]
+        if self.balance_classes and training:
+            # If no_leak is minority class, duplicate it with augmentation
+            if len(self.no_leak_files) < len(self.leak_files):
+                # Calculate how many times we need to duplicate
+                target_size = len(self.leak_files)
+                while len(self.no_leak_files) < target_size:
+                    # Add copies from original no_leak files
+                    remaining_needed = target_size - len(self.no_leak_files)
+                    # Take the minimum between remaining needed and original size
+                    num_to_add = min(remaining_needed, len(self.no_leak_files))
+                    self.no_leak_files.extend(self.no_leak_files[:num_to_add])
             
             # Combine balanced files
             self.filepaths = self.no_leak_files + self.leak_files
@@ -67,6 +72,9 @@ class DataGenerator(Sequence):
         print(f"[INFO] Class distribution after balancing:")
         print(f"  No leak (0): {len(self.no_leak_files)} samples")
         print(f"  Leak (1-7): {len(self.leak_files)} samples")
+
+        if len(self.filepaths) == 0:
+            raise RuntimeError(f"No valid .npz files found in {data_dir}")
 
         self.on_epoch_end()
 
@@ -80,53 +88,43 @@ class DataGenerator(Sequence):
         return math.ceil(len(self.filepaths) / self.batch_size)
 
     def __getitem__(self, idx):
-        batch_slice = self.filepaths[idx * self.batch_size: (idx + 1) * self.batch_size]
-
-        if not batch_slice:
-            print(f"[DEBUG] Empty batch detected at batch {idx}.")
-            return np.empty((0, 15, 240, 320, 1)), np.array([], dtype=np.int32)
-
+        batch_slice = self.filepaths[idx * self.batch_size:(idx + 1) * self.batch_size]
         X_list, y_list = [], []
-
-        for (path, orig_label) in batch_slice:
+        
+        for path, orig_label in batch_slice:
             try:
                 with np.load(path) as data:
-                    frames = data['segment'].astype(np.float32)
-
-                    # Validate shape (15, 240, 320, 1)
+                    frames = data['segment'].astype(np.float32)  # Using 'segment' as key
+                    
+                    # Ensure correct shape
                     if frames.shape != (15, 240, 320, 1):
-                        print(f"[ERROR] Invalid shape in {path}: {frames.shape}. Expected (15, 240, 320, 1)")
-                        continue
-
-                    # Ensure channel dimension exists (some .npz might save as (15,240,320))
-                    if frames.ndim == 3:
-                        frames = np.expand_dims(frames, axis=-1)
-                        print(f"[WARNING] Added channel dim to {path}")
-            except Exception as e:
-                print(f"[ERROR] Corrupted file {path}: {str(e)}")
-                continue
-
-            # Map label
-            if self.binary_all_leak:
-                label = 0 if orig_label == 0 else 1
-            else:
-                if self.binary_pair is not None:
-                    if orig_label == self.binary_pair[0]:
-                        label = 0
+                        frames = frames.reshape(15, 240, 320, 1)
+                    
+                    # Apply augmentation for no-leak class during training
+                    if self.training and orig_label == 0:
+                        frames = self.augmenter.apply_augmentation(frames)
+                        
+                    # Verify shape after augmentation
+                    assert frames.shape == (15, 240, 320, 1), f"Invalid shape after processing: {frames.shape}"
+                    
+                    # Convert label to binary if needed
+                    if self.binary_all_leak:
+                        label = 1 if orig_label > 0 else 0
+                    elif self.binary_pair is not None:
+                        label = 1 if orig_label == self.binary_pair[1] else 0
                     else:
-                        label = 1
-                else:
-                    label = orig_label  # fallback
-
-            X_list.append(frames)
-            y_list.append(label)
-
-        if not X_list:  # If no valid data in batch, skip it
-            print(f"[DEBUG] No valid data found in batch {idx}. Skipping.")
+                        label = orig_label
+                        
+                    X_list.append(frames)
+                    y_list.append(label)
+            except Exception as e:
+                print(f"[ERROR] Failed to load {path}: {str(e)}")
+                continue
+                
+        if not X_list:
             return np.empty((0, 15, 240, 320, 1)), np.array([], dtype=np.int32)
-
-        X_batch = np.array(X_list, dtype=np.float32)  # (B, T, H, W, C)
-        y_batch = np.array(y_list, dtype=np.int32)
-
-        # print(f"[DEBUG] Batch {idx} shape: {X_batch.shape}")  # Should be (batch_size, 15,240,320,1)
+            
+        X_batch = np.array(X_list)
+        y_batch = np.array(y_list)
+        
         return X_batch, y_batch
