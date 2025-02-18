@@ -3,6 +3,7 @@ import os
 import numpy as np
 import pandas as pd
 from collections import deque
+from scipy.fft import fft
 
 def parse_excel_time(time_str):
     """
@@ -37,19 +38,28 @@ def seconds_to_min_sec(total_sec):
     ss = total_sec % 60
     return f"{mm}:{ss:02d}"
 
-
-
 def process_video(
     video_path,
     xlss_path,
     output_dir,
     frame_sizes=[15],
-    segment_length_sec=180,    # 3 minutes = 180 seconds
-    total_segments=8,         # 8 segments for a 24-minute video
+    segment_length_sec=180,
+    total_segments=8,
     remove_start_sec=15,
     remove_end_sec=5,
     gaussian_kernel_size=(7,7),
-    background_window=210
+    background_window=210,
+    # Farneback parameters - adjusted for better plume detection
+    pyr_scale=0.5,
+    levels=3,
+    winsize=21,  # Increased for better motion pattern detection
+    iterations=3,
+    poly_n=5,
+    poly_sigma=1.2,
+    # Refined thresholds
+    mmt_threshold=1.2,
+    pat_threshold=100,  # Further lowered for very subtle plumes
+    min_movement_threshold=10
 ):
     """
     Process a ~24-minute video in eight 3-minute segments (classes 0..7).
@@ -59,6 +69,29 @@ def process_video(
     - If the filename has '_s2', we do a train/val split; if '_s1', we save everything to test.
     - We also write each segment's final start/end (mm:ss) to a .txt file.
     """
+    
+    def detect_flag_motion(flow, magnitude, prev_flag=None):
+        """Simplified function that only detects flag motion"""
+        flow_x, flow_y = flow[..., 0], flow[..., 1]
+        angle = np.arctan2(flow_y, flow_x)
+        
+        # Local motion statistics for flag detection
+        local_mag = cv2.blur(magnitude, (15,15))
+        local_angle = cv2.blur(angle, (15,15))
+        
+        # Flag characteristics: high velocity + consistent direction
+        flag_motion = (
+            (magnitude > mmt_threshold * 2.5) &          # High velocity
+            (local_mag > mmt_threshold * 2.2) &          # Sustained high motion
+            (np.abs(local_angle - angle) < 0.2)          # Consistent direction
+        )
+        
+        # Temporal consistency for flag detection
+        if prev_flag is not None:
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3))
+            flag_motion = flag_motion & (cv2.dilate(prev_flag.astype(np.uint8), kernel) > 0)
+        
+        return flag_motion
 
     # 1. Read the Excel for "Start Time for Leak 0"
     metadata = pd.read_excel(xlss_path)
@@ -139,8 +172,10 @@ def process_video(
     # Rolling buffer for background frames
     background_frames = deque(maxlen=background_window)
 
+    prev_gray = None
+    prev_flag = None
     
-
+    
     # 7. Loop over the 8 segments (class labels 0..7)
     for class_label in range(total_segments):
 
@@ -153,8 +188,6 @@ def process_video(
         if chunk_end_sec > full_end_sec:
             chunk_end_sec = full_end_sec
 
-        # chunk_end_sec_prev = chunk_end_sec
-
         chunk_start_frame = int(chunk_start_sec * fps)
         chunk_end_frame   = int(chunk_end_sec * fps)
 
@@ -164,37 +197,79 @@ def process_video(
             current_frame_index = chunk_start_frame
 
         segment_frames = []
+        # Motion history for temporal analysis
         # Read frames from chunk_start_frame up to chunk_end_frame
         while current_frame_index < chunk_end_frame:
             ret, frame = cap.read()
             if not ret:
-                # end of file
                 break
 
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             gray = cv2.GaussianBlur(gray, gaussian_kernel_size, 0)
-
-            # Update background buffer
-            background_frames.append(gray)
-
-            # Simple mean if not enough frames in deque, else median
+            
+            # 1. Detect flag motion using optical flow
+            flag_mask = None
+            if prev_gray is not None:
+                flow = cv2.calcOpticalFlowFarneback(
+                    prev_gray, gray, None,
+                    pyr_scale, levels, winsize,
+                    iterations, poly_n, poly_sigma, 0
+                )
+                
+                magnitude = np.sqrt(flow[..., 0]**2 + flow[..., 1]**2)
+                flag_mask = detect_flag_motion(flow, magnitude, prev_flag)
+                prev_flag = flag_mask
+            
+            # 2. Moving Average Background Subtraction
+            gray_filtered = gray.copy()
+            if flag_mask is not None:
+                # Mask out flag regions
+                kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3))
+                flag_mask_dilated = cv2.dilate(flag_mask.astype(np.uint8), kernel)
+                gray_filtered[flag_mask_dilated > 0] = 0
+            
+            background_frames.append(gray_filtered)
             if len(background_frames) < background_window:
-                temp_bg = np.mean(background_frames, axis=0).astype(np.uint8)
-                fg = cv2.absdiff(gray, temp_bg)
+                bg = np.mean(background_frames, axis=0).astype(np.uint8)
             else:
-                median_bg = np.median(np.array(background_frames), axis=0).astype(np.uint8)
-                fg = cv2.absdiff(gray, median_bg)
-
-            # Threshold
-            _, fg = cv2.threshold(fg, 15, 255, cv2.THRESH_BINARY)
+                bg = np.median(np.array(background_frames), axis=0).astype(np.uint8)
+            
+            # Get foreground
+            fg = cv2.absdiff(gray_filtered, bg)
+            _, fg = cv2.threshold(fg, 8, 255, cv2.THRESH_BINARY)
+            
+            # Basic component filtering
+            nb_components, output, stats, centroids = cv2.connectedComponentsWithStats(
+                fg, connectivity=8
+            )
+            
+            clean_fg = np.zeros_like(fg)
+            for i in range(1, nb_components):
+                size = stats[i, -1]
+                if 10 <= size <= 1000:  # Basic size filtering
+                    mask = output == i
+                    clean_fg[mask] = 255
+            
+            # Basic movement check
+            if np.count_nonzero(clean_fg) < min_movement_threshold:
+                clean_fg = np.zeros_like(clean_fg)
+            
+            # Minimal cleanup
+            clean_fg = cv2.medianBlur(clean_fg, 3)
+            
             # Normalize
-            fg = fg / 255.0
-
+            fg = np.clip(clean_fg / 255.0, 0, 1)
+            
+            prev_gray = gray.copy()
             segment_frames.append(fg)
             current_frame_index += 1
 
             if current_frame_index >= chunk_end_frame:
                 break
+            
+        # More permissive segment-level consistency
+        if np.mean([np.count_nonzero(f) for f in segment_frames]) < pat_threshold * 0.2:
+            segment_frames = [np.zeros_like(segment_frames[0]) for _ in segment_frames]
 
         # Remove first 15 sec and last 5 sec from this chunk
         start_remove = remove_start_sec * fps
@@ -213,14 +288,6 @@ def process_video(
         final_end_sec   = chunk_end_sec   - remove_end_sec
         start_str = seconds_to_min_sec(int(final_start_sec))
         end_str   = seconds_to_min_sec(int(final_end_sec))
-
-        # Write times to a .txt
-        time_log_path = os.path.join(
-            output_dir, "txt_file", f"{video_name}_class{class_label}_times.txt"
-        )
-        with open(time_log_path, 'w') as f:
-            f.write(f"Class {class_label} Start Time: {start_str}\n")
-            f.write(f"Class {class_label} End Time:   {end_str}\n")
 
         # 8. Save sliding-window patches
         step = 5  # a step of 5 frames
