@@ -1,5 +1,6 @@
 import os
 from src.preprocess.mog2_preprocess import MOG2_process_video
+from src.preprocess.preprocess import process_video
 from src.train.train import train_binary
 from src.test.test import test_binary
 import tensorflow as tf
@@ -55,18 +56,17 @@ def save_preprocessing_benchmark(method_name, benchmark_results, benchmark_dir):
 def main():
     # Create all necessary directories
     required_dirs = [
-        "./result/benchmark/data_aug",
-        "./result/exe_time/data_aug",
-        "./result/binary/data_aug",
-        "./result/binary_mog2/data_aug",
-        "./result/best_model/data_aug",
-        "./result/best_model_mog2/data_aug",
-        "./data/processed/train",
-        "./data/processed/val",
-        "./data/processed/test",
-        "./data/processed_mog2/train",
-        "./data/processed_mog2/val",
-        "./data/processed_mog2/test"
+        "./data/processed_optical_flow",
+        "./data/processed_optical_flow_mog2",
+        "./result/benchmark/optical_flow",
+        "./result/benchmark/optical_flow_mog2",
+        "./result/exe_time/optical_flow",
+        "./result/binary_optical_flow/data_aug",
+        "./result/best_model_optical_flow/data_aug",
+        "./result/binary_optical_flow_mog2/data_aug",
+        "./result/best_model_optical_flow_mog2/data_aug"
+        "./result/optical_flow/moving_average",
+        "./result/optical_flow/mog2"
     ]
     
     for dir_path in required_dirs:
@@ -82,8 +82,9 @@ def main():
     ]
 
     # Define directory variables
-    exe_time_dir = "./result/exe_time/data_aug"
-    benchmark_dir = "./result/benchmark/data_aug"
+    exe_time_dir = "./result/exe_time/optical_flow"
+    benchmark_dir = "./result/benchmark/optical_flow"
+    benchmark_dir_mog2 = "./result/benchmark/optical_flow_mog2"
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     # Common parameters
@@ -91,184 +92,147 @@ def main():
     epochs = 100
     
     xlss_path = "./resources/GasVid_Logging_File.xlsx"
-    output_dir = "./data/processed_mog2"
 
-    # # Process videos with Moving Average
-    # print("\n====== Moving Average Background Subtraction ======")
-    # mvag_benchmark_results = []
-    # mvag_start_time = time.time()  # Start timing entire Moving Average process
+    # Define base parameters
+    base_params = {
+        'gaussian_kernel_size': (7,7),
+        'frame_sizes': [15],
+        'segment_length_sec': 180,
+        'total_segments': 8,
+        'remove_start_sec': 15,
+        'remove_end_sec': 5,
+        # Farneback parameters
+        'pyr_scale': 0.6,
+        'levels': 3,
+        'winsize': 21,
+        'iterations': 5,
+        'poly_n': 7,
+        'poly_sigma': 2.0,
+        # Motion detection parameters
+        'mmt_threshold': 1.0,
+        'pat_threshold': 80,
+        'min_movement_threshold': 5
+    }
+
+    # Moving Average specific parameters
+    ma_params = {
+        **base_params,
+        'background_window': 210
+    }
+
+    # MOG2 specific parameters
+    mog2_params = {
+        **base_params,
+        'history': 210,
+        'var_threshold': 16,
+        'detect_shadows': False
+    }
+
+    # Process videos with different methods
+    print("\n====== Processing Videos ======")
     
-    # for single_video_path in video_paths:
-    #     video_name = os.path.basename(single_video_path)
-    #     print(f"\nProcessing video with Moving Average: {video_name}")
-        
-    #     start_time = time.time()
-    #     MOG2_process_video(single_video_path, xlss_path, output_dir)
-    #     end_time = time.time()
-        
-    #     processing_time = end_time - start_time
-    #     fps = os.path.getsize(single_video_path) / (1024*1024) / processing_time
-        
-    #     mvag_benchmark_results.append({
-    #         'video_name': video_name,
-    #         'size_mb': os.path.getsize(single_video_path) / (1024*1024),
-    #         'processing_time_sec': processing_time,
-    #         'processing_speed_mbs': fps
-    #     })
-        
-    #     # Save interim results after each video
-    #     save_preprocessing_benchmark('MovingAverage', mvag_benchmark_results, benchmark_dir)
+    # Initialize benchmark results for each method
+    optical_flow_ma_results = []  # Optical Flow + Moving Average
+    optical_flow_mog2_results = [] # Optical Flow + MOG2
     
-    # mvag_total_time = time.time() - mvag_start_time  # Calculate total time including overhead
-
-    # # Process videos with MOG2
-    # print("\n====== MOG2 Background Subtraction ======")
-    # mog2_benchmark_results = []
-    # mog2_start_time = time.time()  # Start timing entire MOG2 process
-    
-    # for single_video_path in video_paths:
-    #     video_name = os.path.basename(single_video_path)
-    #     print(f"\nProcessing video with MOG2: {video_name}")
+    for single_video_path in video_paths:
+        video_name = os.path.basename(single_video_path)
         
-    #     start_time = time.time()
-    #     MOG2_process_video(single_video_path, xlss_path, output_dir)
-    #     end_time = time.time()
-        
-    #     processing_time = end_time - start_time
-    #     fps = os.path.getsize(single_video_path) / (1024*1024) / processing_time
-        
-    #     mog2_benchmark_results.append({
-    #         'video_name': video_name,
-    #         'size_mb': os.path.getsize(single_video_path) / (1024*1024),
-    #         'processing_time_sec': processing_time,
-    #         'processing_speed_mbs': fps
-    #     })
-        
-    #     # Save interim results after each video
-    #     save_preprocessing_benchmark('MOG2', mog2_benchmark_results, benchmark_dir)
-    
-    # mog2_total_time = time.time() - mog2_start_time  # Calculate total time including overhead
-
-    # # Save overall comparison with actual total times
-    # comparison_path = os.path.join(benchmark_dir, 'preprocessing_comparison.txt')
-    # with open(comparison_path, 'w') as f:
-    #     f.write("Background Subtraction Methods Comparison\n")
-    #     f.write("=======================================\n\n")
-    #     f.write("Moving Average Method:\n")
-    #     f.write(f"Total Processing Time (including overhead): {mvag_total_time:.2f} seconds\n")
-    #     f.write(f"Pure Processing Time (sum of videos): {sum(r['processing_time_sec'] for r in mvag_benchmark_results):.2f} seconds\n")
-    #     f.write(f"Average Time per Video: {mvag_total_time/len(video_paths):.2f} seconds\n\n")
-        
-    #     f.write("MOG2 Method:\n")
-    #     f.write(f"Total Processing Time (including overhead): {mog2_total_time:.2f} seconds\n")
-    #     f.write(f"Pure Processing Time (sum of videos): {sum(r['processing_time_sec'] for r in mog2_benchmark_results):.2f} seconds\n")
-    #     f.write(f"Average Time per Video: {mog2_total_time/len(video_paths):.2f} seconds\n\n")
-        
-    #     f.write("\nTime Difference:\n")
-    #     f.write(f"Absolute: {abs(mvag_total_time - mog2_total_time):.2f} seconds\n")
-    #     f.write(f"Relative: {abs(mvag_total_time - mog2_total_time)/min(mvag_total_time, mog2_total_time)*100:.2f}%\n")
-    
-    # print(f"\n[INFO] Method comparison saved to {comparison_path}")
-
-    # Moving Average method
-    print("\n====== Moving Average Background Subtraction Method ======")
-    # Moving Average method
-    print("\n====== Moving Average Background Subtraction Method ======")
-    mvag_train_dir = "./data/processed/train"
-    mvag_val_dir = "./data/processed/val"
-    mvag_test_dir = "./data/processed/test"
-
-    mvag_model_path = "./result/binary/data_aug/cnn_3d_binaryAllLeak.keras"
-    mvag_best_model_path = "./result/best_model/data_aug/cnn_3d_binaryAllLeak.keras"
-
-    try:
-        # Moving Average Training
-        print("\n[INFO] Starting Moving Average method training...")
-        mvag_train_start = time.time()
-        train_binary(mvag_train_dir, mvag_val_dir, mvag_model_path, mvag_best_model_path, batch_size, epochs)
-        mvag_train_duration = time.time() - mvag_train_start
-        # Save training time immediately
-        save_step_time("MovingAverage", "Training", mvag_train_duration, timestamp, exe_time_dir)
-    except Exception as e:
-        print(f"[ERROR] Moving Average training failed: {str(e)}")
-
-    try:
-        # Moving Average Testing
-        print("\n[INFO] Starting Moving Average method testing...")
-        mvag_test_start = time.time()
-        test_binary(
-            test_dir=mvag_test_dir, 
-            model_path=mvag_best_model_path, 
-            batch_size=batch_size,
-            output_base_dir="./result/moving_average/data_aug",
-            method_name="moving_average"
+        # 1. Process with Optical Flow + Moving Average
+        print(f"\nProcessing with Optical Flow + Moving Average: {video_name}")
+        start_time = time.time()
+        process_video(
+            single_video_path, 
+            xlss_path, 
+            "./data/processed_optical_flow",
+            **ma_params
         )
-        mvag_test_duration = time.time() - mvag_test_start
-        save_step_time("MovingAverage", "Testing", mvag_test_duration, timestamp, exe_time_dir)
-    except Exception as e:
-        print(f"[ERROR] Moving Average testing failed: {str(e)}")
-
-    # MOG2 method
-    print("\n====== MOG2 Background Subtraction Method ======")
-    mog2_train_dir = "./data/processed_mog2/train"
-    mog2_val_dir = "./data/processed_mog2/val"
-    mog2_test_dir = "./data/processed_mog2/test"
-    
-    mog2_model_path = "./result/binary_mog2/data_aug/cnn_3d_binaryAllLeak.keras"
-    mog2_best_model_path = "./result/best_model_mog2/data_aug/cnn_3d_binaryAllLeak.keras"
-
-    try:
-        # MOG2 Training
-        print("\n[INFO] Starting MOG2 method training...")
-        mog2_train_start = time.time()
-        train_binary(mog2_train_dir, mog2_val_dir, mog2_model_path, mog2_best_model_path, batch_size, epochs)
-        mog2_train_duration = time.time() - mog2_train_start
-        # Save training time immediately
-        save_step_time("MOG2", "Training", mog2_train_duration, timestamp, exe_time_dir)
-    except Exception as e:
-        print(f"[ERROR] MOG2 training failed: {str(e)}")
-
-    try:
-        # MOG2 Testing
-        print("\n[INFO] Starting MOG2 method testing...")
-        mog2_test_start = time.time()
-        test_binary(
-            test_dir=mog2_test_dir, 
-            model_path=mog2_best_model_path, 
-            batch_size=batch_size,
-            output_base_dir="./result/mog2/data_aug",
-            method_name="mog2"
-        )
-        mog2_test_duration = time.time() - mog2_test_start
-        # Save testing time immediately
-        save_step_time("MOG2", "Testing", mog2_test_duration, timestamp, exe_time_dir)
-    except Exception as e:
-        print(f"[ERROR] MOG2 testing failed: {str(e)}")
-
-    # Optionally create a summary of all completed steps
-    try:
-        create_summary(exe_time_dir, timestamp)
-    except Exception as e:
-        print(f"[ERROR] Failed to create summary: {str(e)}")
-
-def create_summary(exe_time_dir, timestamp):
-    """Create a summary of all completed steps if possible"""
-    summary_path = os.path.join(exe_time_dir, f'summary_{timestamp}.txt')
-    
-    # Collect all step times for this run
-    step_files = [f for f in os.listdir(exe_time_dir) if f.startswith(f'step_time_') and timestamp in f]
-    
-    with open(summary_path, 'w') as f:
-        f.write("Execution Summary\n")
-        f.write("================\n\n")
+        processing_time = time.time() - start_time
         
-        for step_file in sorted(step_files):
-            with open(os.path.join(exe_time_dir, step_file), 'r') as step_f:
-                f.write(f"--- {step_file} ---\n")
-                f.write(step_f.read())
-                f.write("\n")
+        optical_flow_ma_results.append({
+            'video_name': video_name,
+            'size_mb': os.path.getsize(single_video_path) / (1024*1024),
+            'processing_time_sec': processing_time,
+            'processing_speed_mbs': os.path.getsize(single_video_path) / (1024*1024) / processing_time
+        })
+        
+        # 2. Process with Optical Flow + MOG2
+        print(f"\nProcessing with Optical Flow + MOG2: {video_name}")
+        start_time = time.time()
+        MOG2_process_video(
+            single_video_path, 
+            xlss_path, 
+            "./data/processed_optical_flow_mog2",
+            **mog2_params
+        )
+        processing_time = time.time() - start_time
+        
+        optical_flow_mog2_results.append({
+            'video_name': video_name,
+            'size_mb': os.path.getsize(single_video_path) / (1024*1024),
+            'processing_time_sec': processing_time,
+            'processing_speed_mbs': os.path.getsize(single_video_path) / (1024*1024) / processing_time
+        })
+        
+        # Save benchmark results after each video
+        save_preprocessing_benchmark('OpticalFlow_MovingAverage', optical_flow_ma_results, benchmark_dir)
+        save_preprocessing_benchmark('OpticalFlow_MOG2', optical_flow_mog2_results, benchmark_dir_mog2)
 
-    print(f"\n[INFO] Summary created at {summary_path}")
+    # Train and test both methods
+    methods = [
+        {
+            'name': 'OpticalFlow_MovingAverage',
+            'train_dir': "./data/processed_optical_flow/train",
+            'val_dir': "./data/processed_optical_flow/val",
+            'test_dir': "./data/processed_optical_flow/test",
+            'model_path': "./result/binary_optical_flow/data_aug/cnn_3d_binaryAllLeak.keras",
+            'best_model_path': "./result/best_model_optical_flow/data_aug/cnn_3d_binaryAllLeak.keras",
+            'output_dir': "./result/optical_flow/moving_average"
+        },
+        {
+            'name': 'OpticalFlow_MOG2',
+            'train_dir': "./data/processed_optical_flow_mog2/train",
+            'val_dir': "./data/processed_optical_flow_mog2/val",
+            'test_dir': "./data/processed_optical_flow_mog2/test",
+            'model_path': "./result/binary_optical_flow_mog2/data_aug/cnn_3d_binaryAllLeak.keras",
+            'best_model_path': "./result/best_model_optical_flow_mog2/data_aug/cnn_3d_binaryAllLeak.keras",
+            'output_dir': "./result/optical_flow/mog2"
+        }
+    ]
+
+    for method in methods:
+        try:
+            # Training
+            print(f"\n[INFO] Starting {method['name']} method training...")
+            train_start = time.time()
+            train_binary(
+                method['train_dir'],
+                method['val_dir'],
+                method['model_path'],
+                method['best_model_path'],
+                batch_size,
+                epochs
+            )
+            train_duration = time.time() - train_start
+            save_step_time(method['name'], "Training", train_duration, timestamp, exe_time_dir)
+        except Exception as e:
+            print(f"[ERROR] {method['name']} training failed: {str(e)}")
+
+        try:
+            # Testing
+            print(f"\n[INFO] Starting {method['name']} method testing...")
+            test_start = time.time()
+            test_binary(
+                test_dir=method['test_dir'],
+                model_path=method['best_model_path'],
+                batch_size=batch_size,
+                output_base_dir=method['output_dir'],
+                method_name=method['name'].lower()
+            )
+            test_duration = time.time() - test_start
+            save_step_time(method['name'], "Testing", test_duration, timestamp, exe_time_dir)
+        except Exception as e:
+            print(f"[ERROR] {method['name']} testing failed: {str(e)}")
 
 if __name__ == "__main__":
     # Disable XLA and mixed precision
