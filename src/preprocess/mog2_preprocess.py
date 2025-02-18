@@ -1,3 +1,12 @@
+"""
+Improved MOG2 background subtractor for efficient processing.
+- For class 0 only, use the Excel 'Start Time for Leak 0 Video Clip'.
+- For all classes, remove the first 15s and last 5s before saving.
+- Continuous background subtraction with a 210-frame rolling buffer.
+- If the filename has '_s2', we do a train/val split; if '_s1', we save everything to test.
+- We also write each segment's final start/end (mm:ss) to a .txt file.
+"""
+
 import cv2
 import os
 import numpy as np
@@ -47,7 +56,21 @@ def MOG2_process_video(
     total_segments=8,         # 8 segments for a 24-minute video
     remove_start_sec=15,
     remove_end_sec=5,
-    gaussian_kernel_size=(7,7)
+    gaussian_kernel_size=(7,7),
+    history=210,
+    var_threshold=16,
+    detect_shadows=False,
+    # Farneback parameters
+    pyr_scale=0.5,
+    levels=3,
+    winsize=21,
+    iterations=3,
+    poly_n=5,
+    poly_sigma=1.2,
+    # Motion thresholds
+    mmt_threshold=1.2,
+    pat_threshold=100,
+    min_movement_threshold=12
 ):
     """
     Process a ~24-minute video in eight 3-minute segments (classes 0..7).
@@ -59,11 +82,31 @@ def MOG2_process_video(
     - We also write each segment's final start/end (mm:ss) to a .txt file.
     """
 
+    def detect_flag_motion(flow, magnitude, prev_flag=None):
+        """Detect flag motion in optical flow"""
+        flow_x, flow_y = flow[..., 0], flow[..., 1]
+        angle = np.arctan2(flow_y, flow_x)
+        
+        local_mag = cv2.blur(magnitude, (15,15))
+        local_angle = cv2.blur(angle, (15,15))
+        
+        flag_motion = (
+            (magnitude > mmt_threshold * 2.5) &
+            (local_mag > mmt_threshold * 2.2) &
+            (np.abs(local_angle - angle) < 0.2)
+        )
+        
+        if prev_flag is not None:
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3))
+            flag_motion = flag_motion & (cv2.dilate(prev_flag.astype(np.uint8), kernel) > 0)
+        
+        return flag_motion
+
     # Initialize MOG2 background subtractor
     mog2 = cv2.createBackgroundSubtractorMOG2(
-        history=210,          # Number of frames to build background model
-        varThreshold=16,      # Threshold for pixel-wise segmentation
-        detectShadows=False   # Disable shadow detection for speed
+        history=history,
+        varThreshold=var_threshold,
+        detectShadows=detect_shadows
     )
 
     # 1. Read the Excel for "Start Time for Leak 0"
@@ -163,30 +206,76 @@ def MOG2_process_video(
             current_frame_index = chunk_start_frame
 
         segment_frames = []
+        prev_gray = None
+        prev_flag = None
+
         # Read frames from chunk_start_frame up to chunk_end_frame
         while current_frame_index < chunk_end_frame:
             ret, frame = cap.read()
             if not ret:
                 break
 
-            # Convert to grayscale and apply Gaussian blur
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             gray = cv2.GaussianBlur(gray, gaussian_kernel_size, 0)
-
-            # Apply MOG2 background subtraction
-            fg_mask = mog2.apply(gray)
+            flag_mask = None
+            # 1. Motion Analysis (keep the same as it works well)
+            if prev_gray is not None:
+                flow = cv2.calcOpticalFlowFarneback(
+                    prev_gray, gray, None,
+                    pyr_scale, levels, winsize,
+                    iterations, poly_n, poly_sigma, 0
+                )
+                
+                magnitude = np.sqrt(flow[..., 0]**2 + flow[..., 1]**2)
+                flag_mask = detect_flag_motion(flow, magnitude, prev_flag)
+                prev_flag = flag_mask
+  
+            # 2. MOG2 Background Subtraction (replacing moving average)
+            gray_filtered = gray.copy()
+            if flag_mask is not None:
+                # Mask out flag regions
+                kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3))
+                flag_mask_dilated = cv2.dilate(flag_mask.astype(np.uint8), kernel)
+                gray_filtered[flag_mask_dilated > 0] = 0
             
-            # Threshold to get binary mask
-            _, fg = cv2.threshold(fg_mask, 15, 255, cv2.THRESH_BINARY)
+            fg_mask = mog2.apply(gray_filtered)
             
-            # Normalize to [0, 1]
-            fg = fg / 255.0
-
+            # Remove shadows if they were detected
+            if detect_shadows:
+                fg_mask = cv2.threshold(fg_mask, 127, 255, cv2.THRESH_BINARY)[1]
+            
+            # 3. Component Analysis (keep the same as it works well)
+            nb_components, output, stats, centroids = cv2.connectedComponentsWithStats(
+                fg_mask, connectivity=8
+            )
+            
+            clean_fg = np.zeros_like(fg_mask)
+            for i in range(1, nb_components):
+                size = stats[i, -1]
+                if 10 <= size <= 1000:  # Basic size filtering
+                    mask = output == i
+                    clean_fg[mask] = 255
+            
+            # Basic movement check
+            if np.count_nonzero(clean_fg) < min_movement_threshold:
+                clean_fg = np.zeros_like(clean_fg)
+            
+            # Minimal cleanup
+            clean_fg = cv2.medianBlur(clean_fg, 3)
+            
+            # Normalize
+            fg = np.clip(clean_fg / 255.0, 0, 1)
+            
+            prev_gray = gray.copy()
             segment_frames.append(fg)
             current_frame_index += 1
 
             if current_frame_index >= chunk_end_frame:
                 break
+
+        # Keep the same segment-level checks and saving code
+        if np.mean([np.count_nonzero(f) for f in segment_frames]) < pat_threshold * 0.2:
+            segment_frames = [np.zeros_like(segment_frames[0]) for _ in segment_frames]
 
         # Remove first 15 sec and last 5 sec from this chunk
         start_remove = remove_start_sec * fps
@@ -207,13 +296,13 @@ def MOG2_process_video(
         end_str   = seconds_to_min_sec(int(final_end_sec))
 
         # Before writing to time_log_path, add:
-        txt_dir = os.path.join(output_dir, 'txt_file')
-        os.makedirs(txt_dir, exist_ok=True)  # Create directory if it doesn't exist
+        # txt_dir = os.path.join(output_dir, 'txt_file')
+        # os.makedirs(txt_dir, exist_ok=True)  # Create directory if it doesn't exist
 
-        time_log_path = os.path.join(txt_dir, f'{video_name}_class{class_label}_times.txt')
-        with open(time_log_path, 'w') as f:
-            f.write(f"Class {class_label} Start Time: {start_str}\n")
-            f.write(f"Class {class_label} End Time:   {end_str}\n")
+        # time_log_path = os.path.join(txt_dir, f'{video_name}_class{class_label}_times.txt')
+        # with open(time_log_path, 'w') as f:
+        #     f.write(f"Class {class_label} Start Time: {start_str}\n")
+        #     f.write(f"Class {class_label} End Time:   {end_str}\n")
 
         # 8. Save sliding-window patches
         step = 5  # a step of 5 frames
