@@ -3,6 +3,7 @@ import numpy as np
 import tensorflow as tf
 from src.model.model import cnn_3d_model
 from src.loader.loader import DataGenerator
+import math
 
 from sklearn.model_selection import KFold
 from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
@@ -106,30 +107,129 @@ def evaluate_all_leak_vs_no_leak(model_path, test_dir, batch_size, output_dir):
 
     return y_true, y_pred
 
+# def evaluate_per_leak_class(model_path, test_dir, batch_size, output_dir):
+#     """
+#     Perform 10-fold testing for each leak class vs. no leak (0..k).
+#     Only saves the final accuracy table.
+#     """
+#     print("[INFO] Evaluate each leak class vs. no-leak (0), with 10-fold testing...")
+
+#     # Build a single model & load weights once
+#     base_model = cnn_3d_model(input_shape=(15, 240, 320, 1), num_classes=2)
+#     base_model.load_weights(model_path)
+
+#     final_results = {i: [] for i in range(1, 8)}  # Store accuracies for each class
+
+#     for leak_class in range(1, 8):
+#         print(f"\n--- 0 vs {leak_class} (10-fold) ---")
+        
+#         # Create balanced generator for this leak class
+#         temp_gen = DataGenerator(
+#             data_dir=test_dir,
+#             batch_size=batch_size,
+#             shuffle=False,
+#             binary_all_leak=False,
+#             binary_pair=(0, leak_class),
+#             balance_classes=True
+#         )
+
+#         if len(temp_gen.filepaths) == 0:
+#             print(f"Skipping 0 vs {leak_class} - no data found.")
+#             continue
+
+#         # 10-fold cross-validation
+#         kf = KFold(n_splits=10, shuffle=True, random_state=42)
+#         fold_accuracies = []
+        
+#         for fold_i, (_, test_idx) in enumerate(kf.split(temp_gen.filepaths)):
+#             # Get fold-specific test data
+#             fold_files = [temp_gen.filepaths[i] for i in test_idx]
+            
+#             fold_gen = DataGenerator(
+#                 data_dir=test_dir,
+#                 batch_size=batch_size,
+#                 shuffle=False,
+#                 binary_all_leak=False,
+#                 binary_pair=(0, leak_class),
+#                 explicit_files=fold_files,
+#                 balance_classes=True
+#             )
+            
+#             y_true, y_pred = [], []
+#             for X_batch, y_batch in fold_gen:
+#                 if len(X_batch) == 0:
+#                     break
+#                 preds = base_model.predict(X_batch, verbose=0)
+#                 y_pred.extend(preds.argmax(axis=-1))
+#                 y_true.extend(y_batch)
+            
+#             if len(y_true) > 0:
+#                 acc = accuracy_score(y_true, y_pred)
+#                 fold_accuracies.append(acc)
+#                 print(f"Fold {fold_i+1}/10 | Accuracy: {acc:.4f}")
+        
+#         # Store and print class summary
+#         final_results[leak_class] = fold_accuracies
+#         mean_acc = np.mean(fold_accuracies)
+#         std_acc = np.std(fold_accuracies)
+#         print(f"\n0 vs {leak_class} | Mean Accuracy: {mean_acc:.4f} ± {std_acc:.4f}")
+
+#     # Generate final table
+#     generate_final_table(final_results, output_dir)
+#     return final_results
+
+# def generate_final_table(final_results, output_dir):
+#     """
+#     Generate the final accuracy comparison table from 10-fold results.
+#     """
+#     # Calculate mean accuracies
+#     table_data = {}
+#     for leak_class in range(1, 8):
+#         accuracies = final_results[leak_class]
+#         if len(accuracies) == 0:
+#             table_data[leak_class] = 0.0
+#         else:
+#             table_data[leak_class] = np.mean(accuracies) * 100  # Convert to percentage
+    
+#     # Create formatted table
+#     table_filename = os.path.join(output_dir, "accuracy_comparison_table.txt")
+#     with open(table_filename, "w") as f:
+#         f.write("Table: Accuracy comparison in the leak vs. non-leak binary problem\n")
+#         f.write("Architecture |  0-1   0-2   0-3   0-4   0-5   0-6   0-7\n")
+#         f.write("------------------------------------------------------\n")
+        
+#         row_str = "VideoGasNet  |"
+#         for leak_class in range(1, 8):
+#             acc = table_data[leak_class]
+#             row_str += f" {acc:6.1f}% "
+#         f.write(row_str + "\n")
+    
+#     print(f"\nFinal table saved to: {table_filename}")
+
 def evaluate_per_leak_class(model_path, test_dir, batch_size, output_dir):
     """
-    Perform 10-fold testing for each leak class vs. no leak (0..k).
-    Only saves the final accuracy table.
+    Perform 10-fold testing for each leak class vs. no leak (0..7) using VideoGasNet.
+    Only saves the final accuracy table for VideoGasNet.
     """
-    print("[INFO] Evaluate each leak class vs. no-leak (0), with 10-fold testing...")
+    print("[INFO] Evaluating leak classes using VideoGasNet (10-fold)...")
 
-    # Build a single model & load weights once
+    # Load the trained VideoGasNet model (3D CNN)
     base_model = cnn_3d_model(input_shape=(15, 240, 320, 1), num_classes=2)
     base_model.load_weights(model_path)
 
-    final_results = {i: [] for i in range(1, 8)}  # Store accuracies for each class
+    final_results = {i: [] for i in range(1, 8)}  # Store accuracies for each leak class
 
     for leak_class in range(1, 8):
         print(f"\n--- 0 vs {leak_class} (10-fold) ---")
         
-        # Create balanced generator for this leak class
+        # Create a balanced data generator for this leak class
         temp_gen = DataGenerator(
             data_dir=test_dir,
             batch_size=batch_size,
             shuffle=False,
             binary_all_leak=False,
             binary_pair=(0, leak_class),
-            balance_classes=True
+            balance_classes=False
         )
 
         if len(temp_gen.filepaths) == 0:
@@ -151,7 +251,7 @@ def evaluate_per_leak_class(model_path, test_dir, batch_size, output_dir):
                 binary_all_leak=False,
                 binary_pair=(0, leak_class),
                 explicit_files=fold_files,
-                balance_classes=True
+                balance_classes=False
             )
             
             y_true, y_pred = [], []
@@ -171,15 +271,21 @@ def evaluate_per_leak_class(model_path, test_dir, batch_size, output_dir):
         final_results[leak_class] = fold_accuracies
         mean_acc = np.mean(fold_accuracies)
         std_acc = np.std(fold_accuracies)
-        print(f"\n0 vs {leak_class} | Mean Accuracy: {mean_acc:.4f} ± {std_acc:.4f}")
+        
+        # Round the results appropriately (round to 4 decimals for accuracy, 3 for standard deviation)
+        mean_acc = round(mean_acc, 4)
+        std_acc = round(std_acc, 3)
+        
+        print(f"\n0 vs {leak_class} | Mean Accuracy: {mean_acc:.4f} ± {std_acc:.3f}")
 
     # Generate final table
     generate_final_table(final_results, output_dir)
     return final_results
 
+
 def generate_final_table(final_results, output_dir):
     """
-    Generate the final accuracy comparison table from 10-fold results.
+    Generate the final accuracy comparison table from 10-fold results for VideoGasNet.
     """
     # Calculate mean accuracies
     table_data = {}
@@ -188,22 +294,24 @@ def generate_final_table(final_results, output_dir):
         if len(accuracies) == 0:
             table_data[leak_class] = 0.0
         else:
-            table_data[leak_class] = np.mean(accuracies) * 100  # Convert to percentage
+            # Round mean accuracies to 1 decimal place for presentation
+            table_data[leak_class] = round(np.mean(accuracies) * 100, 1)  # Convert to percentage
     
-    # Create formatted table
-    table_filename = os.path.join(output_dir, "accuracy_comparison_table.txt")
+    # Create formatted table for VideoGasNet
+    table_filename = os.path.join(output_dir, "accuracy_comparison_videoGasNet.txt")
     with open(table_filename, "w") as f:
-        f.write("Table 2.5: Accuracy comparison in the leak vs. non-leak binary problem\n")
-        f.write("Architecture |  0-1   0-2   0-3   0-4   0-5   0-6   0-7\n")
+        f.write("Table: Accuracy comparison in the leak vs. non-leak binary classification problem\n")
+        f.write("Architecture   | 0-1   0-2   0-3   0-4   0-5   0-6   0-7\n")
         f.write("------------------------------------------------------\n")
         
-        row_str = "VideoGasNet  |"
+        row_str = "VideoGasNet    |"
         for leak_class in range(1, 8):
             acc = table_data[leak_class]
             row_str += f" {acc:6.1f}% "
         f.write(row_str + "\n")
     
     print(f"\nFinal table saved to: {table_filename}")
+
 
 def test_binary(test_dir, model_path, batch_size, output_base_dir="./result", method_name="unknown"):
     """
@@ -233,10 +341,10 @@ def test_binary(test_dir, model_path, batch_size, output_base_dir="./result", me
     generate_final_table(final_results, output_dir)
 
     # Create a summary file
-    summary_path = os.path.join(output_dir, f"{method_name}_test_summary.txt")
-    with open(summary_path, 'w') as f:
-        f.write(f"Test Summary for {method_name}\n")
-        f.write("================================\n\n")
-        f.write(f"All leak vs no-leak results: {all_leak_dir}\n")
-        f.write(f"10-fold test results: {fold_test_dir}\n")
-        f.write(f"Final table location: {output_dir}\n")
+    # summary_path = os.path.join(output_dir, f"{method_name}_test_summary.txt")
+    # with open(summary_path, 'w') as f:
+    #     f.write(f"Test Summary for {method_name}\n")
+    #     f.write("================================\n\n")
+    #     # f.write(f"All leak vs no-leak results: {all_leak_dir}\n")
+    #     f.write(f"10-fold test results: {fold_test_dir}\n")
+    #     f.write(f"Final table location: {output_dir}\n")
