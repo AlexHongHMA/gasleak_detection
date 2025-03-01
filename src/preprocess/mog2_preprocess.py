@@ -59,7 +59,7 @@ def MOG2_process_video(
     gaussian_kernel_size=(7,7),
     history=210,
     var_threshold=16,
-    detect_shadows=False,
+    detect_shadows=True,
     # Farneback parameters
     pyr_scale=0.5,
     levels=3,
@@ -70,7 +70,12 @@ def MOG2_process_video(
     # Motion thresholds
     mmt_threshold=1.2,
     pat_threshold=100,
-    min_movement_threshold=12
+    min_movement_threshold=12,
+    K = 3,
+    alpha = 0.08,
+    initial_variance = 15.0,
+    min_variance = 10.0,
+    weight_threshold = 0.9
 ):
     """
     Process a ~24-minute video in eight 3-minute segments (classes 0..7).
@@ -81,6 +86,12 @@ def MOG2_process_video(
     - If the filename has '_s2', we do a train/val split; if '_s1', we save everything to test.
     - We also write each segment's final start/end (mm:ss) to a .txt file.
     """
+
+    sharpen_kernel = np.array([
+        [0, -0.2, 0],
+    [-0.2,  2, -0.2],
+    [0, -0.2, 0]
+    ], dtype=np.float32)
 
     def detect_flag_motion(flow, magnitude, prev_flag=None):
         """Detect flag motion in optical flow"""
@@ -208,15 +219,85 @@ def MOG2_process_video(
         segment_frames = []
         prev_gray = None
         prev_flag = None
+        first_frame = True
 
         # Read frames from chunk_start_frame up to chunk_end_frame
         while current_frame_index < chunk_end_frame:
             ret, frame = cap.read()
             if not ret:
                 break
+            
+            kernel = np.ones((3, 3), np.uint8)
 
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            # Convert the current frame to grayscale
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
             gray = cv2.GaussianBlur(gray, gaussian_kernel_size, 0)
+            
+            #MOG2 algorithm (Test)
+            if first_frame:
+                # Initialize Gaussian mixtures for the first frame
+                height, width = gray.shape
+                means = np.zeros((height, width, K), dtype=np.float32)
+                variances = np.ones((height, width, K), dtype=np.float32) * initial_variance
+                weights = np.zeros((height, width, K), dtype=np.float32)
+
+                means[:, :, 0] = gray
+                weights[:, :, 0] = 1.0
+
+                fg_mask = np.zeros_like(gray, dtype=np.uint8)
+                first_frame = False
+            else:
+                # MOG2: Compute matches
+                diffs = np.abs(gray[:, :, None] - means)
+                sigmas = np.sqrt(variances)
+                matches = diffs < 2.5 * sigmas
+                match_any = np.any(matches, axis=2)
+
+                # Identify best-matching Gaussian (highest weight among matches)
+                masked_weights = weights.copy()
+                masked_weights[~matches] = -1
+                best_k = np.argmax(masked_weights, axis=2)
+
+                # Identify least-weighted Gaussian for replacement
+                min_k = np.argmin(weights, axis=2)
+
+                # Update weights
+                weights = (1 - alpha) * weights
+                rows, cols = np.where(match_any)
+                if len(rows) > 0:
+                    k_to_update = best_k[rows, cols]
+                    weights[rows, cols, k_to_update] += alpha
+
+                    # Update means and variances
+                    diff = gray[rows, cols] - means[rows, cols, k_to_update]
+                    means[rows, cols, k_to_update] += alpha * diff
+                    variances[rows, cols, k_to_update] = (
+                        (1 - alpha) * variances[rows, cols, k_to_update] + alpha * diff**2
+                    )
+                    variances[rows, cols, k_to_update] = np.maximum(
+                        variances[rows, cols, k_to_update], min_variance
+                    )
+
+                # Replace least-weighted Gaussian for non-matching pixels
+                rows_no_match, cols_no_match = np.where(~match_any)
+                if len(rows_no_match) > 0:
+                    k_to_replace = min_k[rows_no_match, cols_no_match]
+                    means[rows_no_match, cols_no_match, k_to_replace] = gray[rows_no_match, cols_no_match]
+                    variances[rows_no_match, cols_no_match, k_to_replace] = initial_variance
+                    weights[rows_no_match, cols_no_match, k_to_replace] = alpha
+
+                # Normalize weights
+                sum_weights = np.sum(weights, axis=2, keepdims=True)
+                weights = weights / sum_weights
+
+                # Compute foreground mask
+                bg_gaussians = weights > weight_threshold
+                matches_bg = matches & bg_gaussians
+                max_weight_k = np.argmax(weights, axis=2)
+                bg_mean = means[np.arange(height)[:, None], np.arange(width), max_weight_k]
+                fg_mask = cv2.absdiff(gray, bg_mean.astype(np.uint8))
+            
+            
             flag_mask = None
             # 1. Motion Analysis (keep the same as it works well)
             if prev_gray is not None:
@@ -230,52 +311,47 @@ def MOG2_process_video(
                 flag_mask = detect_flag_motion(flow, magnitude, prev_flag)
                 prev_flag = flag_mask
   
-            # 2. MOG2 Background Subtraction (replacing moving average)
-            gray_filtered = gray.copy()
             if flag_mask is not None:
                 # Mask out flag regions
                 kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3))
                 flag_mask_dilated = cv2.dilate(flag_mask.astype(np.uint8), kernel)
-                gray_filtered[flag_mask_dilated > 0] = 0
+                fg_mask[flag_mask_dilated > 0] = 0
             
-            fg_mask = mog2.apply(gray_filtered)
+            # Post-processing on foreground mask
+            fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, kernel, iterations=1)
+            fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_CLOSE, kernel, iterations=1)
             
-            # Remove shadows if they were detected
-            if detect_shadows:
-                fg_mask = cv2.threshold(fg_mask, 127, 255, cv2.THRESH_BINARY)[1]
-            
-            # 3. Component Analysis (keep the same as it works well)
-            nb_components, output, stats, centroids = cv2.connectedComponentsWithStats(
-                fg_mask, connectivity=8
-            )
-            
-            clean_fg = np.zeros_like(fg_mask)
-            for i in range(1, nb_components):
-                size = stats[i, -1]
-                if 10 <= size <= 1000:  # Basic size filtering
-                    mask = output == i
-                    clean_fg[mask] = 255
+            # 3. Component Analysis
+            num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(fg_mask, connectivity=8)
+            min_area = 80
+            for i in range(1, num_labels):
+                area = stats[i, cv2.CC_STAT_AREA]
+                if area < min_area:
+                    fg_mask[labels == i] = 0
+
+            if np.count_nonzero(fg_mask) < 10:
+                fg_mask = np.zeros_like(fg_mask)
             
             # Basic movement check
-            if np.count_nonzero(clean_fg) < min_movement_threshold:
-                clean_fg = np.zeros_like(clean_fg)
+            if np.count_nonzero(fg_mask) < min_movement_threshold:
+                fg_mask = np.zeros_like(fg_mask)
             
-            # Minimal cleanup
-            clean_fg = cv2.medianBlur(clean_fg, 3)
+            fg_mask = cv2.erode(fg_mask, kernel, iterations=1)
+            fg_mask = cv2.filter2D(fg_mask, -1, sharpen_kernel)
+            fg_mask = np.clip(fg_mask / 255.0, 0, 1)
             
-            # Normalize
-            fg = np.clip(clean_fg / 255.0, 0, 1)
+            # Normalize to [0,1] range
             
             prev_gray = gray.copy()
-            segment_frames.append(fg)
+            segment_frames.append(fg_mask)
             current_frame_index += 1
 
             if current_frame_index >= chunk_end_frame:
                 break
 
         # Keep the same segment-level checks and saving code
-        if np.mean([np.count_nonzero(f) for f in segment_frames]) < pat_threshold * 0.2:
-            segment_frames = [np.zeros_like(segment_frames[0]) for _ in segment_frames]
+        # if np.mean([np.count_nonzero(f) for f in segment_frames]) < pat_threshold * 0.2:
+        #     segment_frames = [np.zeros_like(segment_frames[0]) for _ in segment_frames]
 
         # Remove first 15 sec and last 5 sec from this chunk
         start_remove = remove_start_sec * fps

@@ -56,17 +56,18 @@ def save_preprocessing_benchmark(method_name, benchmark_results, benchmark_dir):
 def main():
     # Create all necessary directories
     required_dirs = [
-        "./data/processed_optical_flow",
-        "./data/processed_optical_flow_mog2",
-        "./result/benchmark/optical_flow",
-        "./result/benchmark/optical_flow_mog2",
-        "./result/exe_time/optical_flow",
-        "./result/binary_optical_flow/data_aug",
-        "./result/best_model_optical_flow/data_aug",
-        "./result/binary_optical_flow_mog2/data_aug",
-        "./result/best_model_optical_flow_mog2/data_aug"
-        "./result/optical_flow/moving_average",
-        "./result/optical_flow/mog2"
+        "./data/processed_optical_flow_gray",
+        "./result/benchmark/optical_flow_gray",
+        "./result/exe_time/optical_flow_gray",
+        "./result/binary_optical_flow_gray/data_aug",
+        "./result/best_model_optical_flow_gray/data_aug",
+        "./result/optical_flow_gray/moving_average",
+
+        "./data/processed_optical_flow_mog2_gray",
+        "./result/benchmark/optical_flow_mog2_gray",
+        "./result/exe_time/optical_flow_mog2_gray",
+        "./result/binary_optical_flow_mog2_gray/data_aug",
+        "./result/best_model_optical_flow_mog2_gray/data_aug",
     ]
     
     for dir_path in required_dirs:
@@ -82,36 +83,39 @@ def main():
     ]
 
     # Define directory variables
-    exe_time_dir = "./result/exe_time/optical_flow"
-    benchmark_dir = "./result/benchmark/optical_flow"
-    benchmark_dir_mog2 = "./result/benchmark/optical_flow_mog2"
+    exe_time_dir = "./result/exe_time/optical_flow_gray"
+    benchmark_dir = "./result/benchmark/optical_flow_gray"
+    benchmark_dir_mog2 = "./result/benchmark/optical_flow_mog2_gray"
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
 
     # Common parameters
     batch_size = 32
-    epochs = 100
+    epochs = 50
     
     xlss_path = "./resources/GasVid_Logging_File.xlsx"
 
+    ma_dir = "./data/processed_optical_flow_gray"
+    mog2_dir = "./data/processed_optical_flow_mog2_gray"
     # Define base parameters
     base_params = {
-        'gaussian_kernel_size': (7,7),
+        'gaussian_kernel_size':(3,3),
         'frame_sizes': [15],
         'segment_length_sec': 180,
         'total_segments': 8,
         'remove_start_sec': 15,
         'remove_end_sec': 5,
         # Farneback parameters
-        'pyr_scale': 0.6,
+        'pyr_scale': 0.5,
         'levels': 3,
         'winsize': 21,
-        'iterations': 5,
-        'poly_n': 7,
-        'poly_sigma': 2.0,
-        # Motion detection parameters
-        'mmt_threshold': 1.0,
-        'pat_threshold': 80,
-        'min_movement_threshold': 5
+        'iterations': 3,
+        'poly_n': 5,
+        'poly_sigma': 1.2,
+        # Enhanced thresholds
+        'mmt_threshold': 1.2,
+        'pat_threshold': 30,
+        'min_movement_threshold': 10
     }
 
     # Moving Average specific parameters
@@ -125,7 +129,12 @@ def main():
         **base_params,
         'history': 210,
         'var_threshold': 16,
-        'detect_shadows': False
+        'detect_shadows': True,
+        'K': 3,
+        'alpha': 0.08,
+        'initial_variance': 15.0,
+        'min_variance': 10.0,
+        'weight_threshold': 0.9
     }
 
     # Process videos with different methods
@@ -135,68 +144,69 @@ def main():
     optical_flow_ma_results = []  # Optical Flow + Moving Average
     optical_flow_mog2_results = [] # Optical Flow + MOG2
     
-    for single_video_path in video_paths:
-        video_name = os.path.basename(single_video_path)
+    # for single_video_path in video_paths:
+    #     video_name = os.path.basename(single_video_path)
         
-        # 1. Process with Optical Flow + Moving Average
-        print(f"\nProcessing with Optical Flow + Moving Average: {video_name}")
-        start_time = time.time()
-        process_video(
-            single_video_path, 
-            xlss_path, 
-            "./data/processed_optical_flow",
-            **ma_params
-        )
-        processing_time = time.time() - start_time
+    #     # # 1. Process with Optical Flow + Moving Average
+    #     # print(f"\nProcessing with Optical Flow + Moving Average: {video_name}")
+    #     # start_time = time.time()
+    #     # process_video(
+    #     #     single_video_path, 
+    #     #     xlss_path, 
+    #     #     ma_dir,
+    #     #     **ma_params
+    #     # )
+    #     # processing_time = time.time() - start_time
         
-        optical_flow_ma_results.append({
-            'video_name': video_name,
-            'size_mb': os.path.getsize(single_video_path) / (1024*1024),
-            'processing_time_sec': processing_time,
-            'processing_speed_mbs': os.path.getsize(single_video_path) / (1024*1024) / processing_time
-        })
+    #     # optical_flow_ma_results.append({
+    #     #     'video_name': video_name,
+    #     #     'size_mb': os.path.getsize(single_video_path) / (1024*1024),
+    #     #     'processing_time_sec': processing_time,
+    #     #     'processing_speed_mbs': os.path.getsize(single_video_path) / (1024*1024) / processing_time
+    #     # })
         
-        # 2. Process with Optical Flow + MOG2
-        print(f"\nProcessing with Optical Flow + MOG2: {video_name}")
-        start_time = time.time()
-        MOG2_process_video(
-            single_video_path, 
-            xlss_path, 
-            "./data/processed_optical_flow_mog2",
-            **mog2_params
-        )
-        processing_time = time.time() - start_time
+    #     # 2. Process with Optical Flow + MOG2
+    #     print(f"\nProcessing with Optical Flow + our own MOG2: {video_name}")
+    #     start_time = time.time()
+    #     MOG2_process_video(
+    #         single_video_path, 
+    #         xlss_path, 
+    #         mog2_dir,
+    #         **mog2_params
+    #     )
+    #     processing_time = time.time() - start_time
         
-        optical_flow_mog2_results.append({
-            'video_name': video_name,
-            'size_mb': os.path.getsize(single_video_path) / (1024*1024),
-            'processing_time_sec': processing_time,
-            'processing_speed_mbs': os.path.getsize(single_video_path) / (1024*1024) / processing_time
-        })
+    #     optical_flow_mog2_results.append({
+    #         'video_name': video_name,
+    #         'size_mb': os.path.getsize(single_video_path) / (1024*1024),
+    #         'processing_time_sec': processing_time,
+    #         'processing_speed_mbs': os.path.getsize(single_video_path) / (1024*1024) / processing_time
+    #     })
         
-        # Save benchmark results after each video
-        save_preprocessing_benchmark('OpticalFlow_MovingAverage', optical_flow_ma_results, benchmark_dir)
-        save_preprocessing_benchmark('OpticalFlow_MOG2', optical_flow_mog2_results, benchmark_dir_mog2)
+    #     # Save benchmark results after each video
+    #     # save_preprocessing_benchmark('OpticalFlow_MovingAverage', optical_flow_ma_results, benchmark_dir)
+    #     save_preprocessing_benchmark('OpticalFlow_MOG2', optical_flow_mog2_results, benchmark_dir_mog2)
 
     # Train and test both methods
     methods = [
+        # {
+        #     'name': 'OpticalFlow_MovingAverage with gray scale',
+        #     'train_dir': "./data/processed_optical_flow_gray/train",
+        #     'val_dir': "./data/processed_optical_flow_gray/val",
+        #     'test_dir': "./data/processed_optical_flow_gray/test",
+        #     'model_path': "./result/binary_optical_flow_gray/data_aug/cnn_3d_binaryAllLeak.keras",
+        #     'best_model_path': "./result/best_model_optical_flow_gray/data_aug/cnn_3d_binaryAllLeak.keras",
+        #     'output_dir': "./result/optical_flow_gray/moving_average"
+        # }
+        # ,
         {
-            'name': 'OpticalFlow_MovingAverage',
-            'train_dir': "./data/processed_optical_flow/train",
-            'val_dir': "./data/processed_optical_flow/val",
-            'test_dir': "./data/processed_optical_flow/test",
-            'model_path': "./result/binary_optical_flow/data_aug/cnn_3d_binaryAllLeak.keras",
-            'best_model_path': "./result/best_model_optical_flow/data_aug/cnn_3d_binaryAllLeak.keras",
-            'output_dir': "./result/optical_flow/moving_average"
-        },
-        {
-            'name': 'OpticalFlow_MOG2',
-            'train_dir': "./data/processed_optical_flow_mog2/train",
-            'val_dir': "./data/processed_optical_flow_mog2/val",
-            'test_dir': "./data/processed_optical_flow_mog2/test",
-            'model_path': "./result/binary_optical_flow_mog2/data_aug/cnn_3d_binaryAllLeak.keras",
-            'best_model_path': "./result/best_model_optical_flow_mog2/data_aug/cnn_3d_binaryAllLeak.keras",
-            'output_dir': "./result/optical_flow/mog2"
+            'name': 'OpticalFlow_MOG2 with gray scale',
+            'train_dir': "./data/processed_optical_flow_mog2_gray/train",
+            'val_dir': "./data/processed_optical_flow_mog2_gray/val",
+            'test_dir': "./data/processed_optical_flow_mog2_gray/test",
+            'model_path': "./result/binary_optical_flow_mog2_gray/data_aug/cnn_3d_binaryAllLeak_gray.keras",
+            'best_model_path': "./result/best_model_optical_flow_mog2_gray/data_aug/cnn_3d_binaryAllLeak_gray.keras",
+            'output_dir': "./result/optical_flow_mog2_gray"
         }
     ]
 
@@ -210,6 +220,7 @@ def main():
                 method['val_dir'],
                 method['model_path'],
                 method['best_model_path'],
+                method['output_dir'],
                 batch_size,
                 epochs
             )

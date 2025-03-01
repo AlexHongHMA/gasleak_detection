@@ -47,7 +47,7 @@ def process_video(
     total_segments=8,
     remove_start_sec=15,
     remove_end_sec=5,
-    gaussian_kernel_size=(7,7),
+    gaussian_kernel_size=(3,3),
     background_window=210,
     # Farneback parameters - adjusted for better plume detection
     pyr_scale=0.5,
@@ -69,7 +69,12 @@ def process_video(
     - If the filename has '_s2', we do a train/val split; if '_s1', we save everything to test.
     - We also write each segment's final start/end (mm:ss) to a .txt file.
     """
-    
+    sharpen_kernel = np.array([
+    [0, -0.2, 0],
+    [-0.2,  2, -0.2],
+    [0, -0.2, 0]
+    ], dtype=np.float32)
+
     def detect_flag_motion(flow, magnitude, prev_flag=None):
         """Simplified function that only detects flag motion"""
         flow_x, flow_y = flow[..., 0], flow[..., 1]
@@ -204,7 +209,10 @@ def process_video(
             if not ret:
                 break
 
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            kernel = np.ones((3, 3), np.uint8)
+            
+            # Convert the current frame to grayscale
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
             gray = cv2.GaussianBlur(gray, gaussian_kernel_size, 0)
             
             # 1. Detect flag motion using optical flow
@@ -229,34 +237,34 @@ def process_video(
                 gray_filtered[flag_mask_dilated > 0] = 0
             
             background_frames.append(gray_filtered)
-            if len(background_frames) < background_window:
-                bg = np.mean(background_frames, axis=0).astype(np.uint8)
-            else:
-                bg = np.median(np.array(background_frames), axis=0).astype(np.uint8)
+            # if len(background_frames) < background_window:
+            #     bg = np.mean(background_frames, axis=0).astype(np.uint8)
+            # else:
+            bg = np.median(np.array(background_frames), axis=0).astype(np.uint8)
             
             # Get foreground
             fg = cv2.absdiff(gray_filtered, bg)
-            _, fg = cv2.threshold(fg, 8, 255, cv2.THRESH_BINARY)
+            # open to remove noise, then dilate
+            fg = cv2.morphologyEx(fg, cv2.MORPH_OPEN, kernel, iterations=1)
+            fg = cv2.morphologyEx(fg, cv2.MORPH_CLOSE, kernel, iterations=1)
             
             # Basic component filtering
-            nb_components, output, stats, centroids = cv2.connectedComponentsWithStats(
-                fg, connectivity=8
-            )
+            num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(fg, connectivity=8)
+            min_area = 80  # remove components smaller than 80 pixels, for instance
             
-            clean_fg = np.zeros_like(fg)
-            for i in range(1, nb_components):
-                size = stats[i, -1]
-                if 10 <= size <= 1000:  # Basic size filtering
-                    mask = output == i
-                    clean_fg[mask] = 255
+            for i in range(1, num_labels):  # label 0 is background
+                area = stats[i, cv2.CC_STAT_AREA]
+                if area < min_area:
+                    fg[labels == i] = 0
             
             # Basic movement check
-            if np.count_nonzero(clean_fg) < min_movement_threshold:
-                clean_fg = np.zeros_like(clean_fg)
+            if np.count_nonzero(fg) < min_movement_threshold:
+                fg = np.zeros_like(fg)
             
-            # Minimal cleanup
-            clean_fg = cv2.medianBlur(clean_fg, 3)
-            
+            # Apply morphological operations to reduce noise
+            clean_fg = cv2.erode(fg, kernel, iterations=1)
+
+            clean_fg = cv2.filter2D(clean_fg, -1, sharpen_kernel) # Sharpen the mask
             # Normalize
             fg = np.clip(clean_fg / 255.0, 0, 1)
             
@@ -267,9 +275,9 @@ def process_video(
             if current_frame_index >= chunk_end_frame:
                 break
             
-        # More permissive segment-level consistency
-        if np.mean([np.count_nonzero(f) for f in segment_frames]) < pat_threshold * 0.2:
-            segment_frames = [np.zeros_like(segment_frames[0]) for _ in segment_frames]
+        # # More permissive segment-level consistency
+        # if np.mean([np.count_nonzero(f) for f in segment_frames]) < pat_threshold * 0.2:
+        #     segment_frames = [np.zeros_like(segment_frames[0]) for _ in segment_frames]
 
         # Remove first 15 sec and last 5 sec from this chunk
         start_remove = remove_start_sec * fps
@@ -328,5 +336,4 @@ def process_video(
 
     cap.release()
     print("[DONE] Finished processing video:", video_name)
-
 

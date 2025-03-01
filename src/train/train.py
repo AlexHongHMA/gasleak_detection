@@ -5,8 +5,9 @@ import tensorflow as tf
 from src.model.model import cnn_3d_model
 from src.loader.loader import DataGenerator
 from tensorflow.keras.callbacks import (ModelCheckpoint, EarlyStopping, ReduceLROnPlateau)
+import datetime
 
-def train_binary(train_dir, val_dir, model_save_path, best_model_path, batch_size, epochs):
+def train_binary(train_dir, val_dir, model_save_path, best_model_path,output_base_dir, batch_size, epochs):
     # 1) Build the model
     #    Input shape = (T, H, W, C), e.g. (15, 240, 320, 1)
     model = cnn_3d_model(input_shape=(15, 240, 320, 1), num_classes=2)
@@ -49,7 +50,7 @@ def train_binary(train_dir, val_dir, model_save_path, best_model_path, batch_siz
 
     earlystop_cb = EarlyStopping(
         monitor='val_loss',
-        patience=18,
+        patience=10,
         restore_best_weights=True,
         verbose=1
     )
@@ -77,3 +78,20 @@ def train_binary(train_dir, val_dir, model_save_path, best_model_path, batch_siz
     model.save(model_save_path)
     print(f"[INFO] Model saved to {model_save_path}")
     print("[INFO] Best model (lowest val_loss) saved to", best_model_path)
+
+    # # 8) Evaluate validation set
+    # print("\n[INFO] Evaluating original model on validation set...")
+    # results = model.evaluate(val_gen, verbose=1)
+    # print(f"Original model - Loss: {results[0]:.4f}, Accuracy: {results[1]:.4f}")
+    
+    # # 9) Save evaluation results to text file with current date
+    # current_date = datetime.datetime.now().strftime("%Y-%m-%d")
+    # eval_result_path = os.path.join(output_base_dir, f"eval_results_{current_date}.txt")
+    
+    # with open(eval_result_path, 'w') as f:
+    #     f.write(f"Evaluation Date: {current_date}\n")
+    #     f.write(f"Loss: {results[0]:.4f}\n")
+    #     f.write(f"Accuracy: {results[1]:.4f}\n")
+    
+    # print(f"[INFO] Evaluation results saved to {eval_result_path}")
+    

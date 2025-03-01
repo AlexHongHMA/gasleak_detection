@@ -38,11 +38,11 @@ def cnn_3d_model(input_shape, num_classes=2):
 
     # Fully Connected Layer 1 with Dropout
     model.add(layers.Dense(640, activation='relu'))
-    model.add(layers.Dropout(0.5))  # Adding Dropout with a rate of 0.2 (20% dropout)
+    model.add(layers.Dropout(0.3))  
 
     # Fully Connected Layer 2 with Dropout
     model.add(layers.Dense(128, activation='relu'))
-    model.add(layers.Dropout(0.5))  # Adding Dropout with a rate of 0.2
+    model.add(layers.Dropout(0.3))  
 
     # Output Layer with 2 classes
     model.add(layers.Dense(num_classes, activation='softmax'))
