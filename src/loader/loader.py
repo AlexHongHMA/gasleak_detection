@@ -5,10 +5,7 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 from tensorflow.keras import layers, models
 from tensorflow.keras.utils import Sequence
-from tensorflow.keras.models import load_model
-from tensorflow.keras.callbacks import (EarlyStopping,
-                                        ReduceLROnPlateau,
-                                        ModelCheckpoint)
+
 import math
 from src.augmentation.video_augment import VideoAugmenter
 
