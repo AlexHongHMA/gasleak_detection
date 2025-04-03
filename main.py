@@ -3,11 +3,14 @@ import argparse
 from src.preprocess.mog2_preprocess import MOG2_process_video
 from src.preprocess.runavg_preprocess import runavg_process_video
 from src.preprocess.preprocess import process_video
-from src.train.train import train_binary
-from src.test.test import test_binary
+from src.train.train import train_model
+from src.test.test import test_model
 import tensorflow as tf
 import time
 from datetime import datetime
+
+# Add at the beginning of your script
+# os.environ['TF_CUDNN_DETERMINISTIC'] = '1'
 
 def save_step_time(method_name, step_name, duration, timestamp, exe_time_dir):
     """Save execution time for a single step immediately after completion"""
@@ -58,48 +61,64 @@ def save_preprocessing_benchmark(method_name, benchmark_results, benchmark_dir):
 def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Gas Leak Detection System')
-    parser.add_argument('--methods', nargs='+', choices=['ma', 'mog2', 'runavg'], default=['ma', 'mog2', 'runavg'],
+    parser.add_argument('--methods', nargs='+', choices=['ma', 'mog2', 'runavg'], default=['runavg'],
                         help='Background subtraction methods to use: ma (Moving Average), mog2 (MOG2), runavg (Running Average)')
     parser.add_argument('--skip-training', action='store_true', help='Skip the training phase')
     parser.add_argument('--skip-testing', action='store_true', help='Skip the testing phase')
-    parser.add_argument('--batch-size', type=int, default=32, help='Batch size for training and testing')
+    parser.add_argument('--skip-preprocessing', action='store_true', help='Skip the preprocessing phase')
+    parser.add_argument('--batch-size', type=int, default=16, help='Batch size for training and testing')
     parser.add_argument('--epochs', type=int, default=50, help='Number of epochs for training')
     parser.add_argument('--data-dir', type=str, default='./data', help='Base directory for data')
     parser.add_argument('--result-dir', type=str, default='./result', help='Base directory for results')
+    parser.add_argument('--resolutions', nargs='+', choices=['240x320', '120x160', '60x80'], default=['240x320'],
+                        help='Image resolutions to use for training and testing')
+    parser.add_argument('--classification-mode', choices=['binary', 'three_class'], default='binary',
+                        help='Classification mode: binary (leak/no-leak) or three_class (small/medium/large leak)')
+    parser.add_argument('--distance-filter', choices=['46', '69', 'all'], default='all',
+                        help='Filter by imaging distance: 46 for 4.6m, 69 for 6.9m, all for no filtering')
     args = parser.parse_args()
 
+    # Set three_class_mode based on argument
+    three_class_mode = args.classification_mode == 'three_class'
+    
+    # Set distance filter (None if 'all' is selected)
+    distance_filter = None if args.distance_filter == 'all' else args.distance_filter
+    
+    # Determine mode-specific directory name
+    mode_dir_suffix = "three_class" if three_class_mode else "binary"
+    
     # Map selected methods to their full names and directory suffixes
     method_configs = {
         'ma': {
-            'name': 'OpticalFlow_MovingAverage with gray scale',
-            'data_dir': f"{args.data_dir}/processed_optical_flow_gray",
+            'name': 'OpticalFlow_MovingAverage_with_grayscale',
+            'data_dir': f"/mnt/d/processsed_data/processed_optical_flow_gray/",
             'benchmark_dir': f"{args.result_dir}/benchmark/optical_flow_gray",
             'exe_time_dir': f"{args.result_dir}/exe_time/optical_flow_gray",
-            'model_dir': f"{args.result_dir}/binary_optical_flow_gray/data_aug",
-            'best_model_dir': f"{args.result_dir}/best_model_optical_flow_gray/data_aug",
-            'output_dir': f"{args.result_dir}/optical_flow_gray",
+            'model_dir': f"{args.result_dir}/{mode_dir_suffix}_optical_flow_gray/data_aug",
+            'best_model_dir': f"{args.result_dir}/best_model_optical_flow_gray/{mode_dir_suffix}/data_aug",
+            'output_dir': f"{args.result_dir}/optical_flow_gray/{mode_dir_suffix}",
             'process_func': process_video,
             'params_key': 'ma_params'
         },
         'mog2': {
-            'name': 'OpticalFlow_MOG2 with gray scale',
-            'data_dir': f"{args.data_dir}/processed_optical_flow_mog2_gray",
+            'name': 'OpticalFlow_MOG2_with_grayscale',
+            'data_dir': f"/mnt/d/processsed_data/processed_optical_flow_mog2_gray/",
             'benchmark_dir': f"{args.result_dir}/benchmark/optical_flow_mog2_gray",
             'exe_time_dir': f"{args.result_dir}/exe_time/optical_flow_mog2_gray",
-            'model_dir': f"{args.result_dir}/binary_optical_flow_mog2_gray/data_aug",
+            'model_dir': f"{args.result_dir}/{mode_dir_suffix}_optical_flow_mog2_gray/data_aug",
             'best_model_dir': f"{args.result_dir}/best_model_optical_flow_mog2_gray/data_aug",
-            'output_dir': f"{args.result_dir}/optical_flow_mog2_gray",
+            'output_dir': f"{args.result_dir}/optical_flow_mog2_gray/{mode_dir_suffix}",
             'process_func': MOG2_process_video,
             'params_key': 'mog2_params'
         },
         'runavg': {
-            'name': 'OpticalFlow_RunningAverage with gray scale',
+            'name': 'OpticalFlow_RunningAverage_with_grayscale',
             'data_dir': f"{args.data_dir}/processed_optical_flow_runavg_gray",
-            'benchmark_dir': f"{args.result_dir}/benchmark/optical_flow_runavg_gray",
-            'exe_time_dir': f"{args.result_dir}/exe_time/optical_flow_runavg_gray",
-            'model_dir': f"{args.result_dir}/binary_optical_flow_runavg_gray/data_aug",
-            'best_model_dir': f"{args.result_dir}/best_model_optical_flow_runavg_gray/data_aug",
-            'output_dir': f"{args.result_dir}/optical_flow_runavg_gray",
+            'benchmark_dir': f"{args.result_dir}/benchmark_new/optical_flow_runavg_gray_new",
+            'exe_time_dir': f"{args.result_dir}/exe_time_new/optical_flow_runavg_gray_new",
+            'model_dir': f"{args.result_dir}/{mode_dir_suffix}_optical_flow_runavg_gray_new/data_aug",
+            'best_model_dir':f"{args.result_dir}/best_model_optical_flow_runavg_gray_new/{mode_dir_suffix}/data_aug",
+            'output_dir': f"{args.result_dir}/optical_flow_runavg_gray_new/{mode_dir_suffix}",
             'process_func': runavg_process_video,
             'params_key': 'runavg_params'
         }
@@ -125,7 +144,7 @@ def main():
         os.makedirs(dir_path, exist_ok=True)
         print(f"[INFO] Ensuring directory exists: {dir_path}")
 
-    # Gather all .mp4 files from ./data/raw/
+    # # Gather all .mp4 files from ./data/raw/
     video_dir = f'{args.data_dir}/raw/'
     video_paths = [
         os.path.join(video_dir, f)
@@ -134,7 +153,7 @@ def main():
     ]
 
     # Set common timestamp
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().strftime("%Y%m%d")
     
     # Define base parameters
     base_params = {
@@ -192,96 +211,145 @@ def main():
     # Path to Excel file with video metadata
     xlss_path = "./resources/GasVid_Logging_File.xlsx"
 
-    # Process videos with selected methods
-    print("\n====== Processing Videos ======")
-    
-    # Initialize benchmark results for each selected method
-    benchmark_results = {method['name']: [] for method in selected_methods}
-    
-    for single_video_path in video_paths:
-        video_name = os.path.basename(single_video_path)
+    # Process videos with selected methods (if not skipped)
+    if not args.skip_preprocessing:
+        print("\n====== Processing Videos ======")
         
-        for method in selected_methods:
-            print(f"\nProcessing with {method['name']}: {video_name}")
+        # Initialize benchmark results for each selected method
+        benchmark_results = {method['name']: [] for method in selected_methods}
+        
+        for single_video_path in video_paths:
+            video_name = os.path.basename(single_video_path)
             
-            start_time = time.time()
-            method['process_func'](
-                single_video_path, 
-                xlss_path, 
-                method['data_dir'],
-                **params_dict[method['params_key']]
-            )
-            processing_time = time.time() - start_time
-            
-            benchmark_results[method['name']].append({
-                'video_name': video_name,
-                'size_mb': os.path.getsize(single_video_path) / (1024*1024),
-                'processing_time_sec': processing_time,
-                'processing_speed_mbs': os.path.getsize(single_video_path) / (1024*1024) / processing_time
-            })
-            
-            # Save benchmark results after each video
-            save_preprocessing_benchmark(
-                method['name'], 
-                benchmark_results[method['name']], 
-                method['benchmark_dir']
-            )
-
-    # Skip training if requested
-    if not args.skip_training:
-        # Train and test selected methods
-        methods_for_training = []
-        for method in selected_methods:
-            methods_for_training.append({
-                'name': method['name'],
-                'train_dir': f"{method['data_dir']}/train",
-                'val_dir': f"{method['data_dir']}/val",
-                'test_dir': f"{method['data_dir']}/test",
-                'model_path': f"{method['model_dir']}/cnn_3d_binary_{method['name']}.keras",
-                'best_model_path': f"{method['best_model_dir']}/cnn_3d_binary_{method['name']}.keras",
-                'output_dir': method['output_dir'],
-                'exe_time_dir': method['exe_time_dir']
-            })
-
-        for method in methods_for_training:
-            try:
-                # Training
-                print(f"\n[INFO] Starting {method['name']} method training...")
-                train_start = time.time()
-                train_binary(
-                    method['train_dir'],
-                    method['val_dir'],
-                    method['model_path'],
-                    method['best_model_path'],
-                    method['output_dir'],
-                    args.batch_size,
-                    args.epochs
+            for method in selected_methods:
+                print(f"\nProcessing with {method['name']}: {video_name}")
+                
+                start_time = time.time()
+                method['process_func'](
+                    single_video_path, 
+                    xlss_path, 
+                    method['data_dir'],
+                    **params_dict[method['params_key']]
                 )
-                train_duration = time.time() - train_start
-                save_step_time(method['name'], "Training", train_duration, timestamp, method['exe_time_dir'])
-            except Exception as e:
-                print(f"[ERROR] {method['name']} training failed: {str(e)}")
+                processing_time = time.time() - start_time
+                
+                benchmark_results[method['name']].append({
+                    'video_name': video_name,
+                    'size_mb': os.path.getsize(single_video_path) / (1024*1024),
+                    'processing_time_sec': processing_time,
+                    'processing_speed_mbs': os.path.getsize(single_video_path) / (1024*1024) / processing_time
+                })
+                
+                # Save benchmark results after each video
+                save_preprocessing_benchmark(
+                    method['name'], 
+                    benchmark_results[method['name']], 
+                    method['benchmark_dir']
+                )
 
-            # Skip testing if requested
-            if not args.skip_testing:
+    # Loop through all resolutions
+    for resolution in args.resolutions:
+        # Parse resolution dimensions
+        target_height, target_width = map(int, resolution.split('x'))
+        resolution_str = f"{target_height}x{target_width}"
+        print(f"\n====== Processing with resolution {resolution_str} ======")
+        
+        # Training phase (if not skipped)
+        if not args.skip_training:
+            # Train selected methods
+            methods_for_training = []
+            for method in selected_methods:
+                # Define model type prefix based on classification mode
+                model_type_prefix = "cnn_3d_three_class" if three_class_mode else "cnn_3d_binary"
+
+                # Create filenames with timestamp and appropriate classification type
+                model_path = f"{method['model_dir']}/{model_type_prefix}_{method['name']}_{resolution_str}_{timestamp}.keras"
+                best_model_path = f"{method['best_model_dir']}/{model_type_prefix}_{method['name']}_{resolution_str}_{timestamp}.keras"
+                
+                methods_for_training.append({
+                    'name': method['name'],
+                    'train_dir': f"{method['data_dir']}/train",
+                    'val_dir': f"{method['data_dir']}/val",
+                    'test_dir': f"{method['data_dir']}/test",
+                    'model_path': model_path,
+                    'best_model_path': best_model_path,
+                    'output_dir': method['output_dir'],
+                    'exe_time_dir': method['exe_time_dir']
+                })
+
+            for method in methods_for_training:
+                try:
+                    # Training
+                    print(f"\n[INFO] Starting {method['name']} method training with resolution {resolution_str}...")
+                    train_start = time.time()
+                    train_model(
+                        method['train_dir'],
+                        method['val_dir'],
+                        method['model_path'],
+                        method['best_model_path'],
+                        method['output_dir'],
+                        args.batch_size,
+                        args.epochs,
+                        target_height=target_height,
+                        target_width=target_width,
+                        three_class_mode=three_class_mode,
+                        distance_filter=distance_filter
+                    )
+                    train_duration = time.time() - train_start
+                    save_step_time(method['name'], f"Training_{resolution_str}", train_duration, timestamp, method['exe_time_dir'])
+                except Exception as e:
+                    print(f"[ERROR] {method['name']} training failed: {str(e)}")
+        
+        # Testing phase (if not skipped)
+        if not args.skip_testing:
+            # Set up methods for testing
+            methods_for_testing = []
+            for method in selected_methods:
+                # Use the most recent model for testing
+                model_type_prefix = "cnn_3d_three_class" if three_class_mode else "cnn_3d_binary"
+                best_model_path = f"{method['best_model_dir']}/{model_type_prefix}_{method['name']}_{resolution_str}_{timestamp}.keras"
+                
+                methods_for_testing.append({
+                    'name': method['name'],
+                    'test_dir': f"{method['data_dir']}/test",
+                    'best_model_path': best_model_path,
+                    'output_dir': method['output_dir'],
+                    'exe_time_dir': method['exe_time_dir']
+                })
+                
+            for method in methods_for_testing:
                 try:
                     # Testing
-                    print(f"\n[INFO] Starting {method['name']} method testing...")
+                    print(f"\n[INFO] Starting {method['name']} method testing with resolution {resolution_str}...")
                     test_start = time.time()
-                    test_binary(
+                    test_model(
                         test_dir=method['test_dir'],
                         model_path=method['best_model_path'],
                         batch_size=args.batch_size,
                         output_base_dir=method['output_dir'],
-                        method_name=method['name'].lower()
+                        method_name=method['name'].lower(),
+                        target_height=target_height,
+                        target_width=target_width,
+                        three_class_mode=three_class_mode,
+                        distance_filter=distance_filter
                     )
                     test_duration = time.time() - test_start
-                    save_step_time(method['name'], "Testing", test_duration, timestamp, method['exe_time_dir'])
+                    save_step_time(method['name'], f"Testing_{resolution_str}", test_duration, timestamp, method['exe_time_dir'])
                 except Exception as e:
                     print(f"[ERROR] {method['name']} testing failed: {str(e)}")
 
+   # Clear GPU memory between runs
+def clear_gpu_memory():
+       import tensorflow as tf
+       tf.keras.backend.clear_session()
+       import gc
+       gc.collect()
+   
+   # Call this between major operations
+
 if __name__ == "__main__":
     # Disable XLA and mixed precision
+    clear_gpu_memory()
     tf.config.optimizer.set_jit(False)
     tf.keras.mixed_precision.set_global_policy('float32')
 

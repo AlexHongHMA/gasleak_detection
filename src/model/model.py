@@ -1,7 +1,4 @@
-import tensorflow as tf
-# from tensorflow.keras.optimizers import Adam
-from tensorflow.keras import layers, models
-
+from keras import layers, models
 
 def cnn_3d_model(input_shape, num_classes=2):
     model = models.Sequential()

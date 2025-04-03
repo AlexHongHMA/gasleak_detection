@@ -6,8 +6,12 @@ resources/
 result/
 visualization/
 
+#Files
+*_old.py
+
 
 # Virtual environments
+.vscode/
 .env
 .venv
 env/
