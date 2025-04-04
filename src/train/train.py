@@ -46,7 +46,7 @@ def train_model(train_dir, val_dir, model_save_path, best_model_path, output_bas
             data_dir=train_dir,
             batch_size=batch_size,
             shuffle=True,
-            balance_classes=False,
+            balance_classes=True,
             training=True,
             resize=True,
             target_height=target_height,
