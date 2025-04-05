@@ -3,12 +3,12 @@
 import os
 import tensorflow as tf
 from src.model.model import cnn_3d_model
-from src.loader.loader import DataGenerator, DataGeneratorThreeClass
+from src.loader.loader import DataGenerator, DataGeneratorThreeClass, DataGenerator8Classes
 from tensorflow.keras.callbacks import (ModelCheckpoint, EarlyStopping, ReduceLROnPlateau)
 import datetime
 
 def train_model(train_dir, val_dir, model_save_path, best_model_path, output_base_dir, batch_size, epochs, 
-               target_height, target_width, three_class_mode=False, distance_filter=None):
+               target_height, target_width, three_class_mode=False, eight_class_mode=False, distance_filter=None):
     """
     Train a model for gas leak classification.
     
@@ -22,16 +22,24 @@ def train_model(train_dir, val_dir, model_save_path, best_model_path, output_bas
         epochs: Number of epochs to train
         target_height: Target image height
         target_width: Target image width
-        three_class_mode: If True, train for three-class classification (small/medium/large leaks),
-                          otherwise train for binary classification (leak/no-leak)
+        three_class_mode: If True, train for three-class classification (small/medium/large leaks)
+        eight_class_mode: If True, train for 8-class classification (all original classes 0-7)
         distance_filter: Filter data by imaging distance: '46' for 4.6m, '69' for 6.9m, or None for all data
     
     Returns:
         model: Trained model
         history: Training history
     """
-    mode_name = "three_class" if three_class_mode else "binary"
-    num_classes = 3 if three_class_mode else 2
+    # Determine mode
+    if eight_class_mode:
+        mode_name = "eight_class"
+        num_classes = 8
+    elif three_class_mode:
+        mode_name = "three_class"
+        num_classes = 3
+    else:
+        mode_name = "binary"
+        num_classes = 2
     
     # Add distance information to mode name if a filter is applied
     distance_info = f"_distance_{distance_filter}m" if distance_filter else ""
@@ -41,7 +49,32 @@ def train_model(train_dir, val_dir, model_save_path, best_model_path, output_bas
     model = cnn_3d_model(input_shape=(15, target_height, target_width, 1), num_classes=num_classes)
     
     # 2) Create data generators - use appropriate generator based on mode
-    if three_class_mode:
+    if eight_class_mode:
+        # Use the new 8-class data generator
+        train_gen = DataGenerator8Classes(
+            data_dir=train_dir,
+            batch_size=batch_size,
+            shuffle=True,
+            balance_classes=True,
+            training=True,
+            resize=True,
+            target_height=target_height,
+            target_width=target_width,
+            distance_filter=distance_filter
+        )
+        
+        val_gen = DataGenerator8Classes(
+            data_dir=val_dir,
+            batch_size=batch_size,
+            shuffle=False,
+            balance_classes=False,
+            training=False,
+            resize=True,
+            target_height=target_height,
+            target_width=target_width,
+            distance_filter=distance_filter
+        )
+    elif three_class_mode:
         train_gen = DataGeneratorThreeClass(
             data_dir=train_dir,
             batch_size=batch_size,
@@ -117,8 +150,8 @@ def train_model(train_dir, val_dir, model_save_path, best_model_path, output_bas
     
     lr_scheduler_cb = ReduceLROnPlateau(
         monitor='val_loss',
-        factor=0.1,
-        patience=5,
+        factor=0.5, #0.1
+        patience=7, #5
         verbose=1,
         min_lr=1e-7
     )
