@@ -72,14 +72,15 @@ def main():
     parser.add_argument('--result-dir', type=str, default='./result', help='Base directory for results')
     parser.add_argument('--resolutions', nargs='+', choices=['240x320', '120x160', '60x80'], default=['240x320'],
                         help='Image resolutions to use for training and testing')
-    parser.add_argument('--classification-mode', choices=['binary', 'three_class'], default='binary',
-                        help='Classification mode: binary (leak/no-leak) or three_class (small/medium/large leak)')
+    parser.add_argument('--classification-mode', choices=['binary', 'three_class', 'eight_class'], default='binary',
+                        help='Classification mode: binary (leak/no-leak), three_class (small/medium/large leak), or eight_class (all individual leak types)')
     parser.add_argument('--distance-filter', choices=['46', '69', 'all'], default='all',
                         help='Filter by imaging distance: 46 for 4.6m, 69 for 6.9m, all for no filtering')
     args = parser.parse_args()
 
-    # Set three_class_mode based on argument
+    # Set mode flags based on argument
     three_class_mode = args.classification_mode == 'three_class'
+    eight_class_mode = args.classification_mode == 'eight_class'
     
     # Set distance filter (None if 'all' is selected)
     distance_filter = None if args.distance_filter == 'all' else args.distance_filter
@@ -260,7 +261,13 @@ def main():
             methods_for_training = []
             for method in selected_methods:
                 # Define model type prefix based on classification mode
-                model_type_prefix = "cnn_3d_three_class" if three_class_mode else "cnn_3d_binary"
+                model_type_prefix = ""
+                if eight_class_mode:
+                    model_type_prefix = "cnn_3d_eight_class"
+                elif three_class_mode:
+                    model_type_prefix = "cnn_3d_three_class"
+                else:
+                    model_type_prefix = "cnn_3d_binary"
 
                 # Create filenames with timestamp and appropriate classification type
                 model_path = f"{method['model_dir']}/{model_type_prefix}_{method['name']}_{resolution_str}_{timestamp}.keras"
@@ -293,6 +300,7 @@ def main():
                         target_height=target_height,
                         target_width=target_width,
                         three_class_mode=three_class_mode,
+                        eight_class_mode=eight_class_mode,
                         distance_filter=distance_filter
                     )
                     train_duration = time.time() - train_start
@@ -331,6 +339,7 @@ def main():
                         target_height=target_height,
                         target_width=target_width,
                         three_class_mode=three_class_mode,
+                        eight_class_mode=eight_class_mode,
                         distance_filter=distance_filter
                     )
                     test_duration = time.time() - test_start
