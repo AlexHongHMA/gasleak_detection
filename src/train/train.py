@@ -3,12 +3,12 @@
 import os
 import tensorflow as tf
 from src.model.model import cnn_3d_model
-from src.loader.loader import DataGenerator, DataGeneratorThreeClass
+from src.loader.loader import DataGenerator, DataGeneratorThreeClass, DataGeneratorEightClass
 from tensorflow.keras.callbacks import (ModelCheckpoint, EarlyStopping, ReduceLROnPlateau)
 import datetime
 
 def train_model(train_dir, val_dir, model_save_path, best_model_path, output_base_dir, batch_size, epochs, 
-               target_height, target_width, three_class_mode=False, distance_filter=None):
+               target_height, target_width, three_class_mode=False, eight_class_mode=False, distance_filter=None):
     """
     Train a model for gas leak classification.
     
@@ -22,16 +22,28 @@ def train_model(train_dir, val_dir, model_save_path, best_model_path, output_bas
         epochs: Number of epochs to train
         target_height: Target image height
         target_width: Target image width
-        three_class_mode: If True, train for three-class classification (small/medium/large leaks),
-                          otherwise train for binary classification (leak/no-leak)
+        three_class_mode: If True, train for three-class classification (small/medium/large leaks)
+        eight_class_mode: If True, train for eight-class classification (all individual leak types)
         distance_filter: Filter data by imaging distance: '46' for 4.6m, '69' for 6.9m, or None for all data
     
     Returns:
         model: Trained model
         history: Training history
     """
-    mode_name = "three_class" if three_class_mode else "binary"
-    num_classes = 3 if three_class_mode else 2
+    # Handle mode priority if multiple are True
+    if eight_class_mode and three_class_mode:
+        print("[WARNING] Both eight_class_mode and three_class_mode are True. Eight-class mode will take precedence.")
+        three_class_mode = False
+        
+    if eight_class_mode:
+        mode_name = "eight_class"
+        num_classes = 8
+    elif three_class_mode:
+        mode_name = "three_class"
+        num_classes = 3
+    else:
+        mode_name = "binary"
+        num_classes = 2
     
     # Add distance information to mode name if a filter is applied
     distance_info = f"_distance_{distance_filter}m" if distance_filter else ""
@@ -41,7 +53,32 @@ def train_model(train_dir, val_dir, model_save_path, best_model_path, output_bas
     model = cnn_3d_model(input_shape=(15, target_height, target_width, 1), num_classes=num_classes)
     
     # 2) Create data generators - use appropriate generator based on mode
-    if three_class_mode:
+    if eight_class_mode:
+        # Eight-class mode
+        train_gen = DataGeneratorEightClass(
+            data_dir=train_dir,
+            batch_size=batch_size,
+            shuffle=True,
+            balance_classes=True,
+            training=True,
+            resize=True,
+            target_height=target_height,
+            target_width=target_width,
+            distance_filter=distance_filter
+        )
+        
+        val_gen = DataGeneratorEightClass(
+            data_dir=val_dir,
+            batch_size=batch_size,
+            shuffle=False,
+            balance_classes=False,
+            training=False,
+            resize=True,
+            target_height=target_height,
+            target_width=target_width,
+            distance_filter=distance_filter
+        )
+    elif three_class_mode:
         train_gen = DataGeneratorThreeClass(
             data_dir=train_dir,
             batch_size=batch_size,
@@ -117,10 +154,10 @@ def train_model(train_dir, val_dir, model_save_path, best_model_path, output_bas
     
     lr_scheduler_cb = ReduceLROnPlateau(
         monitor='val_loss',
-        factor=0.1,
+        factor=0.5,
         patience=5,
-        verbose=1,
-        min_lr=1e-7
+        min_lr=1e-7,
+        verbose=1
     )
     
     callbacks_list = [checkpoint_cb, earlystop_cb, lr_scheduler_cb]
@@ -165,6 +202,10 @@ def train_model(train_dir, val_dir, model_save_path, best_model_path, output_bas
             f.write("  - Class 0: Small Leak (original classes 0-2)\n")
             f.write("  - Class 1: Medium Leak (original classes 3-5)\n")
             f.write("  - Class 2: Large Leak (original classes 6-7)\n")
+        elif eight_class_mode:
+            f.write("Class Mapping:\n")
+            f.write("  - Class 0: No Leak\n")
+            f.write("  - Classes 1-7: Individual Leak Types\n")
         f.write(f"Loss: {results[0]:.4f}\n")
         f.write(f"Accuracy: {results[1]:.4f}\n")
     
