@@ -2,7 +2,7 @@ import os
 import numpy as np
 import tensorflow as tf
 from src.model.model import cnn_3d_model
-from src.loader.loader import DataGenerator, DataGeneratorThreeClass
+from src.loader.loader import DataGenerator, DataGeneratorThreeClass, DataGeneratorEightClass
 import math
 from sklearn.model_selection import KFold
 from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
@@ -15,24 +15,24 @@ import traceback
 import platform
 import psutil
 
-def save_confusion_matrix(y_true, y_pred, class_names, output_dir):
+def save_confusion_matrix(y_true, y_pred, class_names, output_dir, filename_prefix=""):
     """Save confusion matrix as an image file."""
     try:
         cm = confusion_matrix(y_true, y_pred)
         plt.figure(figsize=(10, 8))
         sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
                     xticklabels=class_names, yticklabels=class_names)
-        plt.title('Confusion Matrix')
+        plt.title(f'{filename_prefix}Confusion Matrix')
         plt.ylabel('True Label')
         plt.xlabel('Predicted Label')
         os.makedirs(output_dir, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = os.path.join(output_dir, f'confusion_matrix_{timestamp}.png')
+        output_path = os.path.join(output_dir, f'{filename_prefix}_confusion_matrix_{timestamp}.png')
         plt.savefig(output_path)
         plt.close()
-        print(f"Confusion matrix saved to {output_path}")
+        print(f"{filename_prefix}Confusion matrix saved to {output_path}")
     except Exception as e:
-        print(f"Error saving confusion matrix: {e}")
+        print(f"{filename_prefix}Error saving confusion matrix: {e}")
         traceback.print_exc()
 
 def save_classification_report(y_true, y_pred, output_dir):
@@ -591,11 +591,11 @@ def generate_final_table(final_results, output_dir):
     except Exception as e:
         print(f"[ERROR] Failed to generate performance table: {e}")
 
-def test_model(test_dir, model_path, batch_size, output_base_dir="./result", method_name="unknown", 
-               target_height=120, target_width=160, three_class_mode=False, distance_filter=None):
+def test_model(test_dir, model_path, batch_size, output_base_dir, method_name, 
+               target_height=120, target_width=160, three_class_mode=False, eight_class_mode=False, distance_filter=None):
     """
     Main testing function that evaluates the model on test data.
-    Now supports both binary and three-class classification modes.
+    Now supports binary, three-class, and eight-class classification modes.
     
     Args:
         test_dir: Directory containing test data
@@ -606,11 +606,12 @@ def test_model(test_dir, model_path, batch_size, output_base_dir="./result", met
         target_height: Target image height
         target_width: Target image width
         three_class_mode: Set to True for three-class classification (small/medium/large leaks)
+        eight_class_mode: Set to True for eight-class classification (all individual leak types)
         distance_filter: Filter data by imaging distance: '46' for 4.6m, '69' for 6.9m, or 'all' for all data
     """
     try:
         # Check if model_path exists, if not, try to find the model with alternative naming
-        if not os.path.exists(model_path) and not three_class_mode:
+        if not os.path.exists(model_path) and not three_class_mode and not eight_class_mode:
             # Extract the base directory from the path
             base_dir = os.path.dirname(os.path.dirname(os.path.dirname(model_path)))
             method_dir = "optical_flow_gray" if "gray" in method_name.lower() else "optical_flow_mog2"
@@ -637,8 +638,115 @@ def test_model(test_dir, model_path, batch_size, output_base_dir="./result", met
         output_dir = os.path.join(output_base_dir, method_name)
         os.makedirs(output_dir, exist_ok=True)
 
-        # Create subdirectories for different tests
-        if three_class_mode:
+        # Eight-class evaluation mode
+        if eight_class_mode:
+            # For eight-class mode
+            eight_class_dir = os.path.join(output_dir, "eight_class_test")
+            os.makedirs(eight_class_dir, exist_ok=True)
+            
+            # Add dimension info to directory names
+            dimension_str = f"{target_height}x{target_width}"
+            eight_class_dir_with_info = os.path.join(eight_class_dir, dimension_str)
+            os.makedirs(eight_class_dir_with_info, exist_ok=True)
+            
+            # Save system information and configuration
+            config_file = os.path.join(output_base_dir, f"test_config_{datetime.now().strftime('%Y-%m-%d')}.txt")
+            with open(config_file, 'w') as f:
+                f.write(f"Test Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"Model Path: {model_path}\n")
+                f.write(f"Test Data Directory: {test_dir}\n")
+                f.write(f"Target Size: {target_height}x{target_width}\n")
+                f.write(f"Batch Size: {batch_size}\n")
+                f.write(f"Method: {method_name}\n")
+                f.write(f"Mode: Eight-Class Classification\n")
+                f.write(f"Python Version: {os.sys.version}\n")
+                f.write(f"TensorFlow Version: {tf.__version__}\n")
+                
+                # Hardware info if available
+                try:
+                    f.write(f"System: {platform.system()} {platform.release()}\n")
+                    f.write(f"CPU: {platform.processor()}\n")
+                    f.write(f"RAM: {psutil.virtual_memory().total // (1024**3)} GB\n")
+                    
+                    # GPU info 
+                    try:
+                        import subprocess
+                        gpu_info = subprocess.check_output("nvidia-smi --query-gpu=name --format=csv,noheader", shell=True)
+                        f.write(f"GPU: {gpu_info.decode('utf-8').strip()}\n")
+                    except:
+                        f.write("GPU: Information not available\n")
+                except:
+                    f.write("Hardware information not available\n")
+            
+            print(f"\n{'='*70}")
+            print(f"EIGHT-CLASS TESTING FOR {method_name} [{dimension_str}]")
+            print(f"{'='*70}")
+            
+            # Run eight-class evaluation
+            results = None
+            results_46m = None
+            results_69m = None
+            
+            # Run evaluations on specific distances or all distances
+            if distance_filter == '46':
+                print("\n[INFO] Evaluating only 4.6m distance data as specified...")
+                results_46m = evaluate_eight_class_by_distance(model_path, test_dir, batch_size, 
+                                                           eight_class_dir_with_info, '46', target_height, target_width)
+            elif distance_filter == '69':
+                print("\n[INFO] Evaluating only 6.9m distance data as specified...")
+                results_69m = evaluate_eight_class_by_distance(model_path, test_dir, batch_size, 
+                                                           eight_class_dir_with_info, '69', target_height, target_width)
+            elif distance_filter == 'all' or distance_filter is None:
+                # First evaluate on all data
+                print("\n[INFO] Evaluating on all imaging distances...")
+                results = evaluate_eight_class(model_path, test_dir, batch_size, eight_class_dir_with_info, 
+                                      target_height, target_width)
+                
+                # Then evaluate each distance separately
+                print("\n[INFO] Additionally evaluating 4.6m distance specifically...")
+                results_46m = evaluate_eight_class_by_distance(model_path, test_dir, batch_size, 
+                                                           eight_class_dir_with_info, '46', target_height, target_width)
+                print("\n[INFO] Additionally evaluating 6.9m distance specifically...")
+                results_69m = evaluate_eight_class_by_distance(model_path, test_dir, batch_size, 
+                                                           eight_class_dir_with_info, '69', target_height, target_width)
+            
+            # Combine results for summary
+            print("\n[SUMMARY] Eight-Class Classification Results:")
+            
+            if results is not None:
+                print(f"All data accuracy: {results['accuracy']:.4f}")
+            
+            if results_46m is not None:
+                print(f"4.6m distance accuracy: {results_46m['accuracy']:.4f}")
+                
+            if results_69m is not None:
+                print(f"6.9m distance accuracy: {results_69m['accuracy']:.4f}")
+            
+            # Save summary to file
+            summary_path = os.path.join(eight_class_dir_with_info, f'eight_class_summary_{datetime.now().strftime("%Y%m%d_%H%M%S")}.txt')
+            with open(summary_path, 'w') as f:
+                f.write("Eight-Class Classification Summary\n")
+                f.write("================================\n\n")
+                f.write(f"Test Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"Model: {model_path}\n")
+                f.write(f"Resolution: {target_height}x{target_width}\n\n")
+                
+                if results is not None:
+                    f.write(f"All data accuracy: {results['accuracy']:.4f}\n")
+                
+                if results_46m is not None:
+                    f.write(f"4.6m distance accuracy: {results_46m['accuracy']:.4f}\n")
+                
+                if results_69m is not None:
+                    f.write(f"6.9m distance accuracy: {results_69m['accuracy']:.4f}\n")
+            
+            print(f"[INFO] Summary saved to {summary_path}")
+            
+            # Return the main results (prioritize 'all' if available)
+            return results if results is not None else (results_46m if results_46m is not None else results_69m)
+            
+        # Three-class evaluation mode
+        elif three_class_mode:
             # For three-class mode
             three_class_dir = os.path.join(output_dir, "three_class_test")
             os.makedirs(three_class_dir, exist_ok=True)
@@ -824,7 +932,15 @@ def test_model(test_dir, model_path, batch_size, output_base_dir="./result", met
     except Exception as e:
         print(f"[ERROR] Test failed with error: {e}")
         traceback.print_exc()
-        if three_class_mode:
+        if eight_class_mode:
+            return {
+                'accuracy': 0.0,
+                'class_report': None,
+                'confusion_matrix': None,
+                'y_true': [],
+                'y_pred': []
+            }
+        elif three_class_mode:
             return {
                 'accuracy': 0.0,
                 'class_report': None,
@@ -981,14 +1097,286 @@ def evaluate_three_class_by_distance(model_path, test_dir, batch_size, output_di
             'y_pred': []
         }
 
-def evaluate_three_class_distance_46(model_path, test_dir, batch_size, output_dir, target_height=240, target_width=320):
-    """Evaluate three-class classification for 4.6m imaging distance."""
-    return evaluate_three_class_by_distance(
-        model_path, test_dir, batch_size, output_dir, '46', target_height, target_width
-    )
+def evaluate_eight_class(model_path, test_dir, batch_size, output_dir, 
+                         target_height=240, target_width=320):
+    """
+    Evaluate eight-class classification (all individual leak types).
+    
+    Args:
+        model_path: Path to the trained model
+        test_dir: Directory containing test data
+        batch_size: Batch size for evaluation
+        output_dir: Directory to save output files
+        target_height: Target image height 
+        target_width: Target image width
+    """
+    print(f"[INFO] Evaluating eight-class classification...")
+    
+    try:
+        # Directly use the model path provided
+        print(f"[INFO] Using model from: {model_path}")
+        
+        # Check if the model exists
+        if not os.path.exists(model_path):
+            print(f"[ERROR] Model not found at: {model_path}")
+            raise FileNotFoundError(f"Model not found at: {model_path}")
+            
+        # Define class names for reporting
+        class_names = ['No Leak (0)', 'Leak Type 1', 'Leak Type 2', 'Leak Type 3', 
+                      'Leak Type 4', 'Leak Type 5', 'Leak Type 6', 'Leak Type 7']
+        
+        # Load model
+        model = cnn_3d_model(input_shape=(15, target_height, target_width, 1), num_classes=8)
+        model.load_weights(model_path)
 
-def evaluate_three_class_distance_69(model_path, test_dir, batch_size, output_dir, target_height=240, target_width=320):
-    """Evaluate three-class classification for 6.9m imaging distance."""
-    return evaluate_three_class_by_distance(
-        model_path, test_dir, batch_size, output_dir, '69', target_height, target_width
-    )
+        # Warmup a dummy input
+        print("[INFO] Warming up the model with a dummy input")
+        dummy_input = np.random.rand(1, 15, target_height, target_width, 1).astype(np.float32)
+        _ = model.predict(dummy_input, verbose=1)
+        
+        # Create data generator for eight-class mode
+        test_gen = DataGeneratorEightClass(
+            data_dir=test_dir,
+            batch_size=batch_size,
+            shuffle=False,
+            balance_classes=False,
+            training=False,
+            resize=True,
+            target_height=target_height,
+            target_width=target_width
+        )
+        
+        # Calculate number of batches
+        num_batches = len(test_gen)
+        print(f"[INFO] Running predictions on {num_batches} batches...")
+        
+        # Store predictions and true labels
+        y_true = []
+        y_pred = []
+        
+        # Track time for performance monitoring
+        start_time = time.time()
+        
+        # Process batches
+        for batch_idx in range(num_batches):
+            if batch_idx % 10 == 0:
+                print(f"[INFO] Processing batch {batch_idx+1}/{num_batches}")
+            
+            X_batch, y_batch = test_gen[batch_idx]
+            if len(X_batch) == 0:
+                continue
+                
+            # Make predictions
+            batch_pred = model.predict(X_batch, verbose=0)
+            batch_pred_classes = np.argmax(batch_pred, axis=1)
+            
+            # Store results
+            y_true.extend(y_batch)
+            y_pred.extend(batch_pred_classes)
+        
+        # Calculate metrics
+        accuracy = accuracy_score(y_true, y_pred)
+        conf_matrix = confusion_matrix(y_true, y_pred)
+        class_report = classification_report(y_true, y_pred, target_names=class_names)
+        elapsed_time = time.time() - start_time
+        
+        print(f"[INFO] Eight-class evaluation completed in {elapsed_time:.2f} seconds")
+        print(f"[INFO] Accuracy: {accuracy:.4f}")
+        
+        # Save confusion matrix visualization
+        plt.figure(figsize=(10, 8))
+        sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', 
+                   xticklabels=class_names, yticklabels=class_names)
+        plt.title('Eight-Class Confusion Matrix')
+        plt.ylabel('True Label')
+        plt.xlabel('Predicted Label')
+        plt.tight_layout()
+        
+        conf_matrix_path = os.path.join(output_dir, f'eight_class_confusion_matrix_{datetime.now().strftime("%Y%m%d_%H%M%S")}.png')
+        plt.savefig(conf_matrix_path)
+        plt.close()
+        
+        # Save classification report
+        report_path = os.path.join(output_dir, f'eight_class_report_{datetime.now().strftime("%Y%m%d_%H%M%S")}.txt')
+        with open(report_path, 'w') as f:
+            f.write(f"Eight-Class Classification Report\n")
+            f.write("=================================\n\n")
+            f.write(f"Model: {model_path}\n")
+            f.write(f"Test Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            f.write(class_report)
+            
+            # Add class distribution information
+            f.write("\nClass Distribution in Test Set:\n")
+            for i in range(8):
+                f.write(f"  Class {i}: {y_true.count(i)} samples\n")
+                
+            f.write(f"\nTotal Samples: {len(y_true)}\n")
+            f.write(f"Overall Accuracy: {accuracy:.4f}\n")
+            f.write(f"Evaluation Time: {elapsed_time:.2f} seconds\n")
+            
+        print(f"[INFO] Classification report saved to {report_path}")
+        print(f"[INFO] Confusion matrix visualization saved to {conf_matrix_path}")
+            
+        return {
+            'accuracy': accuracy,
+            'y_true': y_true,
+            'y_pred': y_pred,
+            'class_report': classification_report(y_true, y_pred, output_dict=True),
+            'confusion_matrix': conf_matrix
+        }
+        
+    except Exception as e:
+        print(f"[ERROR] Eight-class evaluation failed: {e}")
+        traceback.print_exc()
+        return {
+            'accuracy': 0.0,
+            'class_report': None,
+            'confusion_matrix': None,
+            'y_true': [],
+            'y_pred': []
+        }
+
+def evaluate_eight_class_by_distance(model_path, test_dir, batch_size, output_dir, distance_code, 
+                                     target_height=240, target_width=320):
+    """
+    Evaluate eight-class classification separately for a specific imaging distance.
+    
+    Args:
+        model_path: Path to the trained model
+        test_dir: Directory containing test data
+        batch_size: Batch size for evaluation
+        output_dir: Directory to save output files
+        distance_code: Distance code to filter (e.g., '46' for 4.6m or '69' for 6.9m)
+        target_height: Target image height
+        target_width: Target image width
+    """
+    print(f"[INFO] Evaluating eight-class classification for distance {distance_code}m...")
+    
+    try:
+        # Directly use the model path provided
+        print(f"[INFO] Using model from: {model_path}")
+        
+        # Check if the model exists
+        if not os.path.exists(model_path):
+            print(f"[ERROR] Model not found at: {model_path}")
+            raise FileNotFoundError(f"Model not found at: {model_path}")
+            
+        # Define class names for reporting
+        class_names = ['No Leak (0)', 'Leak Type 1', 'Leak Type 2', 'Leak Type 3', 
+                      'Leak Type 4', 'Leak Type 5', 'Leak Type 6', 'Leak Type 7']
+        
+        # Load model
+        model = cnn_3d_model(input_shape=(15, target_height, target_width, 1), num_classes=8)
+        model.load_weights(model_path)
+
+        # Warmup a dummy input
+        print("[INFO] Warming up the model with a dummy input")
+        dummy_input = np.random.rand(1, 15, target_height, target_width, 1).astype(np.float32)
+        _ = model.predict(dummy_input, verbose=1)
+        
+        # Create data generator for eight-class mode with distance filtering
+        test_gen = DataGeneratorEightClass(
+            data_dir=test_dir,
+            batch_size=batch_size,
+            shuffle=False,
+            balance_classes=False,
+            training=False,
+            resize=True,
+            target_height=target_height,
+            target_width=target_width,
+            distance_filter=distance_code
+        )
+        
+        if len(test_gen.filepaths) == 0:
+            print(f"[ERROR] No test data found for distance {distance_code}m")
+            return {
+                'accuracy': 0.0,
+                'class_report': None,
+                'confusion_matrix': None,
+                'y_true': [],
+                'y_pred': []
+            }
+        
+        print(f"[INFO] Found {len(test_gen.filepaths)} files with distance code {distance_code}")
+        
+        # Calculate number of batches
+        num_batches = len(test_gen)
+        print(f"[INFO] Running predictions on {num_batches} batches...")
+        
+        # Store predictions and true labels
+        y_true = []
+        y_pred = []
+        
+        # Track time for performance monitoring
+        start_time = time.time()
+        
+        # Process batches
+        for batch_idx in range(num_batches):
+            if batch_idx % 10 == 0:
+                print(f"[INFO] Processing batch {batch_idx+1}/{num_batches}")
+            
+            X_batch, y_batch = test_gen[batch_idx]
+            if len(X_batch) == 0:
+                continue
+                
+            # Make predictions
+            batch_pred = model.predict(X_batch, verbose=0)
+            batch_pred_classes = np.argmax(batch_pred, axis=1)
+            
+            # Store results
+            y_true.extend(y_batch)
+            y_pred.extend(batch_pred_classes)
+        
+        # Calculate metrics
+        accuracy = accuracy_score(y_true, y_pred)
+        elapsed_time = time.time() - start_time
+        
+        print(f"[INFO] Eight-class evaluation for distance {distance_code}m completed in {elapsed_time:.2f} seconds")
+        print(f"[INFO] Accuracy: {accuracy:.4f}")
+        
+        # Create a subdirectory for this distance evaluation
+        distance_output_dir = os.path.join(output_dir, f"distance_{distance_code}m")
+        os.makedirs(distance_output_dir, exist_ok=True)
+        
+        # Save confusion matrix and classification report
+        save_confusion_matrix(y_true, y_pred, class_names, distance_output_dir, filename_prefix="eight_class")
+        
+        # Save detailed results
+        results_path = os.path.join(
+            distance_output_dir, 
+            f'eight_class_results_distance_{distance_code}m_{datetime.now().strftime("%Y%m%d_%H%M%S")}.txt'
+        )
+        
+        with open(results_path, 'w') as f:
+            f.write(f"Eight-Class Leak Classification Results for Distance {distance_code}m\n")
+            f.write(f"==================================================================\n\n")
+            f.write(f"Test Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"Model: {model_path}\n")
+            f.write(f"Test Data: {test_dir} (filtered for distance {distance_code}m)\n")
+            f.write(f"Resolution: {target_height}x{target_width}\n\n")
+            f.write(f"Overall Accuracy: {accuracy:.4f}\n\n")
+            f.write(f"Class Distribution:\n")
+            for i in range(8):
+                f.write(f"  Class {i}: {y_true.count(i)} samples\n")
+            f.write(f"\nEvaluation Time: {elapsed_time:.2f} seconds\n")
+        
+        print(f"[INFO] Detailed results saved to {results_path}")
+        
+        return {
+            'accuracy': accuracy,
+            'y_true': y_true,
+            'y_pred': y_pred,
+            'class_report': classification_report(y_true, y_pred, output_dict=True),
+            'confusion_matrix': confusion_matrix(y_true, y_pred)
+        }
+        
+    except Exception as e:
+        print(f"[ERROR] Eight-class evaluation for distance {distance_code}m failed: {e}")
+        traceback.print_exc()
+        return {
+            'accuracy': 0.0,
+            'class_report': None,
+            'confusion_matrix': None,
+            'y_true': [],
+            'y_pred': []
+        }
