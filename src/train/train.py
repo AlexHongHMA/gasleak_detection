@@ -2,6 +2,7 @@
 
 import os
 import tensorflow as tf
+import matplotlib.pyplot as plt
 from src.model.model import cnn_3d_model
 from src.loader.loader import DataGenerator, DataGeneratorThreeClass, DataGeneratorEightClass
 from tensorflow.keras.callbacks import (ModelCheckpoint, EarlyStopping, ReduceLROnPlateau)
@@ -234,6 +235,45 @@ def train_model(train_dir, val_dir, model_save_path, best_model_path, output_bas
             f.write("\n")
     
     print(f"[INFO] Training history saved to {history_file}")
+    
+    # 10) Generate and save training plots
+    try:
+        plots_dir = os.path.join(output_base_dir, "plots")
+        os.makedirs(plots_dir, exist_ok=True)
+        
+        plot_file = os.path.join(plots_dir, f"{mode_name}{distance_suffix}_learning_curves_{current_date}_{target_height}x{target_width}.png")
+        
+        # Create a figure with two subplots for accuracy and loss
+        plt.figure(figsize=(12, 5))
+        
+        # Plot training & validation accuracy
+        plt.subplot(1, 2, 1)
+        plt.plot(history.history['accuracy'], label='Training Accuracy')
+        plt.plot(history.history['val_accuracy'], label='Validation Accuracy')
+        plt.title('Model Accuracy')
+        plt.xlabel('Epoch')
+        plt.ylabel('Accuracy')
+        plt.legend(loc='lower right')
+        plt.grid(True)
+        
+        # Plot training & validation loss
+        plt.subplot(1, 2, 2)
+        plt.plot(history.history['loss'], label='Training Loss')
+        plt.plot(history.history['val_loss'], label='Validation Loss')
+        plt.title('Model Loss')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.legend(loc='upper right')
+        plt.grid(True)
+        
+        plt.tight_layout()
+        plt.savefig(plot_file, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        print(f"[INFO] Learning curves saved to {plot_file}")
+    except Exception as e:
+        print(f"[WARNING] Failed to generate learning curve plots: {str(e)}")
+        print("[INFO] Training completed successfully despite plotting error.")
     
     return model, history
 
