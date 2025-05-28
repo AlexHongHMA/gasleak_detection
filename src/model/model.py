@@ -1,5 +1,6 @@
 from keras import layers, models
 import tensorflow as tf
+from tensorflow.keras.optimizers import Adam
 
 def cnn_3d_model(input_shape, num_classes=2):
     model = models.Sequential()
@@ -8,25 +9,29 @@ def cnn_3d_model(input_shape, num_classes=2):
     model.add(layers.Input(shape=input_shape))
 
     # Conv-Pool Structure 1
-    model.add(layers.Conv3D(4, (5, 5, 5), activation='relu', padding='same'))
+    model.add(layers.Conv3D(4, (5, 5, 5), activation='relu', padding='same', 
+                           kernel_regularizer=tf.keras.regularizers.l2(0.001)))
     model.add(layers.LayerNormalization())
     model.add(layers.MaxPooling3D(pool_size=(3, 3, 3), padding='same'))
     model.add(layers.Dropout(0.1))
 
     # Conv-Pool Structure 2
-    model.add(layers.Conv3D(8, (5, 5, 5), activation='relu', padding='same'))
+    model.add(layers.Conv3D(8, (5, 5, 5), activation='relu', padding='same', 
+                           kernel_regularizer=tf.keras.regularizers.l2(0.001)))
     model.add(layers.LayerNormalization())
     model.add(layers.MaxPooling3D(pool_size=(3, 3, 3), padding='same'))
     model.add(layers.Dropout(0.1))
 
     # Conv-Pool Structure 3
-    model.add(layers.Conv3D(16, (5, 5, 5), activation='relu', padding='same'))
+    model.add(layers.Conv3D(16, (5, 5, 5), activation='relu', padding='same', 
+                           kernel_regularizer=tf.keras.regularizers.l2(0.001)))
     model.add(layers.LayerNormalization())
     model.add(layers.MaxPooling3D(pool_size=(3, 3, 3), padding='same'))
     model.add(layers.Dropout(0.1))
 
     # Conv-Pool Structure 4
-    model.add(layers.Conv3D(32, (5, 5, 5), activation='relu', padding='same'))
+    model.add(layers.Conv3D(32, (5, 5, 5), activation='relu', padding='same', 
+                           kernel_regularizer=tf.keras.regularizers.l2(0.001)))
     model.add(layers.LayerNormalization())
     model.add(layers.MaxPooling3D(pool_size=(3, 3, 3), padding='same'))
     model.add(layers.Dropout(0.15))
@@ -47,6 +52,14 @@ def cnn_3d_model(input_shape, num_classes=2):
     # Output Layer with 2 classes
     model.add(layers.Dense(num_classes, activation='softmax'))
 
+    # # Create a custom Adam optimizer
+    # optimizer = Adam(
+    #     learning_rate=0.001,  # You can adjust this
+    #     beta_1=0.9,          # Default value
+    #     beta_2=0.999,        # Default value
+    #     epsilon=1e-7,        # Default value
+    #     weight_decay=1e-5    # Small weight decay can help with regularization
+    # )
     # Compile the model
     model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
 
