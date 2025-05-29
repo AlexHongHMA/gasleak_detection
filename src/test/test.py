@@ -212,6 +212,7 @@ def evaluate_three_class(model_path, test_dir, batch_size, output_dir, target_he
             'y_pred': []
         }
 
+### Designed for Binary Classification (All Leak vs No Leak)
 def evaluate_all_leak_vs_no_leak(model_path, test_dir, batch_size, output_dir, target_height=240, target_width=320, run_error_analysis=True):
     """
     Evaluate binary classification performance for VideoGasNet (all leak vs. no leak).
@@ -562,6 +563,7 @@ def save_example(X, filepath, confidence, output_dir, prefix):
     plt.savefig(os.path.join(example_dir, "all_frames.png"))
     plt.close()
 
+#Designed for Binary Classification with pairwise comparison methods (0 vs 1-7)
 def evaluate_per_leak_class(model_path, test_dir, batch_size, output_dir, target_height=240, target_width=320):
     """
     Perform 10-fold testing for each leak class vs. no leak (0..7) using VideoGasNet.
