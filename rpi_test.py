@@ -22,7 +22,6 @@ from tensorflow.keras import layers
 from src.loader.loader import DataGenerator
 from src.test.test import save_confusion_matrix, save_classification_report
 # Import all custom objects from rpi_optimized_model
-from rpi_optimized_model import FrameSampler, ResidualBlock, EfficientBlock, SimpleFrameSampler
 
 
 class ModelEvaluator:
