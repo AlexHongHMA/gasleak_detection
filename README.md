@@ -1,6 +1,10 @@
 # Optimised 3D-CNN for Real-Time Infrared Natural Gas Leak Classification - Balancing Accuracy and Computational Cost
 
-
+[![IEEE](https://img.shields.io/badge/IEEE-10.1109/ICoICT66265.2025.11192973-00629B.svg)](https://doi.org/10.1109/ICoICT66265.2025.11192973)
+[![Best Paper](https://img.shields.io/badge/ICoICT%202025-Best%20Paper%20Award-FFD700.svg)](#)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB.svg)](https://www.python.org/)
+[![TensorFlow 2.18](https://img.shields.io/badge/TensorFlow-2.18-FF6F00.svg)](https://www.tensorflow.org/)
 
 This repository contains the source code for the paper:
 
@@ -43,15 +47,25 @@ All code is built from scratch using clues from the reference papers below. Our 
 
 For full details, please refer to the [paper](https://doi.org/10.1109/ICoICT66265.2025.11192973).
 
-## Reference Papers
+## References
 
-This work builds upon:
+1. W. M. Haynes, D. R. Lide, and T. J. Bruno, Eds., *CRC Handbook of Chemistry and Physics: A Ready-Reference Book of Chemical and Physical Data*, 97th ed. Boca Raton, FL: CRC Press, 2016, sections 16-26: Flammability of Chemical Substances.
 
-1. **GasNet / GasVid Dataset** — J. Wang et al., "Machine vision for natural gas methane emissions detection using an infrared camera," *Applied Energy*, vol. 257, 2020.
-   DOI: [10.1016/j.apenergy.2019.113998](https://doi.org/10.1016/j.apenergy.2019.113998)
+2. A. P. Ravikumar, J. Wang, and A. R. Brandt, "Are optical gas imaging technologies effective for methane leak detection?" *Environmental Science & Technology*, vol. 51, p. 718, 2016.
 
-2. **VideoGasNet (3D-CNN)** — J. Wang et al., "VideoGasNet: Deep learning for natural gas methane leak classification using an infrared camera," *Energy*, vol. 238, 2022.
-   DOI: [10.1016/j.energy.2021.121516](https://doi.org/10.1016/j.energy.2021.121516)
+3. J. Wang, L. P. Tchapmi, A. P. Ravikumar, M. McGuire, C. S. Bell, D. Zimmerle, S. Savarese, and A. R. Brandt, "Machine vision for natural gas methane emissions detection using an infrared camera," *Applied Energy*, vol. 257, p. 113998, 2020. DOI: [10.1016/j.apenergy.2019.113998](https://doi.org/10.1016/j.apenergy.2019.113998)
+
+4. J. Wang, J. Ji, A. P. Ravikumar, S. Savarese, and A. R. Brandt, "VideoGasNet: Deep learning for natural gas methane leak classification using an infrared camera," *Energy*, vol. 238, p. 121516, 2022. DOI: [10.1016/j.energy.2021.121516](https://doi.org/10.1016/j.energy.2021.121516)
+
+5. J. Wang, Y. Lin, Q. Zhao, D. Luo, S. Chen, W. Chen, and X. Peng, "Invisible gas detection: An rgb-thermal cross attention network and a new benchmark," *Computer Vision and Image Understanding*, vol. 248, p. 104099, 2024.
+
+6. Z. Yi and F. Liangzhong, "Moving object detection based on running average background and temporal difference," in *2010 IEEE International Conference on Intelligent Systems and Knowledge Engineering*, 2010, pp. 270-272.
+
+7. G. Farneback, "Two-frame motion estimation based on polynomial expansion," in *Image Analysis*, J. Bigun and T. Gustavsson, Eds. Berlin, Heidelberg: Springer Berlin Heidelberg, 2003, pp. 363-370.
+
+8. Z. Zivkovic, "Improved adaptive Gaussian mixture model for background subtraction," in *Proceedings of the 17th International Conference on Pattern Recognition (ICPR)*, vol. 2. IEEE, 2004, pp. 28-31.
+
+9. Z. Zivkovic and F. Van der Heijden, "Efficient adaptive density estimation per image pixel for the task of background subtraction," *Pattern Recognition Letters*, vol. 27, pp. 773-780, 2006.
 
 Our contribution focuses on binary classification (leak vs. no-leak) using the VideoGasNet data and a modified 3D-CNN architecture. Three-class and eight-class classification modes are under development.
 
