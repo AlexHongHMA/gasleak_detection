@@ -58,6 +58,30 @@ def save_preprocessing_benchmark(method_name, benchmark_results, benchmark_dir):
     print(f"\n[INFO] {method_name} benchmark results saved to {benchmark_path}")
     return total_time
 
+def print_system_summary(args):
+    """Print a summary of the current system settings"""
+    print("\n" + "="*50)
+    print("GAS LEAK DETECTION SYSTEM SETTINGS")
+    print("="*50)
+    print(f"Methods: {', '.join(args.methods)}")
+    print(f"Resolutions: {', '.join(args.resolutions)}")
+    print(f"Training Modes: {', '.join(args.train_modes)}")
+    print(f"Testing Modes: {', '.join(args.test_modes)}")
+    print(f"Distance Filter: {args.distance_filter}")
+    print(f"Batch Size: {args.batch_size}")
+    print(f"Epochs: {args.epochs}")
+    print(f"Data Directory: {args.data_dir}")
+    print(f"Result Directory: {args.result_dir}")
+    
+    # Skip flags
+    skipped = []
+    if args.skip_preprocessing: skipped.append("Preprocessing")
+    if args.skip_training: skipped.append("Training")
+    if args.skip_testing: skipped.append("Testing")
+    if skipped:
+        print(f"Skipped Steps: {', '.join(skipped)}")
+    print("="*50 + "\n")
+
 def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Gas Leak Detection System')
@@ -72,17 +96,32 @@ def main():
     parser.add_argument('--result-dir', type=str, default='./result', help='Base directory for results')
     parser.add_argument('--resolutions', nargs='+', choices=['240x320', '120x160', '60x80'], default=['240x320'],
                         help='Image resolutions to use for training and testing')
-    parser.add_argument('--classification-mode', choices=['binary', 'three_class'], default='binary',
-                        help='Classification mode: binary (leak/no-leak) or three_class (small/medium/large leak)')
+    parser.add_argument('--train-modes', nargs='+', choices=['binary', 'three_class', 'eight_class'], 
+                        default=['binary'], help='Classification modes to train')
+    parser.add_argument('--test-modes', nargs='+', choices=['binary', 'three_class', 'eight_class'], 
+                        default=['binary'], help='Classification modes to test')
     parser.add_argument('--distance-filter', choices=['46', '69', 'all'], default='all',
                         help='Filter by imaging distance: 46 for 4.6m, 69 for 6.9m, all for no filtering')
     args = parser.parse_args()
 
-    # Set three_class_mode based on argument
-    three_class_mode = args.classification_mode == 'three_class'
-    
     # Set distance filter (None if 'all' is selected)
     distance_filter = None if args.distance_filter == 'all' else args.distance_filter
+    
+    # Initialize timing variables at the beginning
+    train_start_time = time.time()  # Default initialization
+    test_start_time = time.time()   # Default initialization
+    perform_training = not args.skip_training
+    perform_testing = not args.skip_testing
+    
+    # Create timestamp at the beginning - just the date (YYYYMMDD)
+    timestamp = datetime.now().strftime("%Y%m%d")
+    
+    # Print system settings summary
+    print_system_summary(args)
+    
+    # Set mode flags based on argument
+    three_class_mode = 'three_class' in args.train_modes or 'three_class' in args.test_modes
+    eight_class_mode = 'eight_class' in args.train_modes or 'eight_class' in args.test_modes
     
     # Determine mode-specific directory name
     mode_dir_suffix = "three_class" if three_class_mode else "binary"
@@ -135,8 +174,14 @@ def main():
         # Add result directories
         required_dirs.append(method['benchmark_dir'])
         required_dirs.append(method['exe_time_dir'])
-        required_dirs.append(method['model_dir'])
-        required_dirs.append(method['best_model_dir'])
+        # Add model directories for selected training modes
+        for mode in args.train_modes:
+            mode_model_dir = method['model_dir'].replace(mode_dir_suffix, mode)
+            mode_best_model_dir = method['best_model_dir'].replace(mode_dir_suffix, mode)
+            required_dirs.append(mode_model_dir)
+            required_dirs.append(mode_best_model_dir)
+        
+        # Add output directory
         required_dirs.append(method['output_dir'])
         
     
@@ -152,9 +197,6 @@ def main():
         if f.endswith('.mp4')
     ]
 
-    # Set common timestamp
-    timestamp = datetime.now().strftime("%Y%m%d")
-    
     # Define base parameters
     base_params = {
         'gaussian_kernel_size': (3, 3),
@@ -247,105 +289,209 @@ def main():
                     method['benchmark_dir']
                 )
 
-    # Loop through all resolutions
-    for resolution in args.resolutions:
-        # Parse resolution dimensions
-        target_height, target_width = map(int, resolution.split('x'))
-        resolution_str = f"{target_height}x{target_width}"
-        print(f"\n====== Processing with resolution {resolution_str} ======")
+    # Training phase
+    if perform_training:
+        print("\n\n" + "="*50)
+        print("TRAINING PHASE")
+        print("="*50 + "\n")
         
-        # Training phase (if not skipped)
-        if not args.skip_training:
-            # Train selected methods
-            methods_for_training = []
-            for method in selected_methods:
-                # Define model type prefix based on classification mode
-                model_type_prefix = "cnn_3d_three_class" if three_class_mode else "cnn_3d_binary"
-
-                # Create filenames with timestamp and appropriate classification type
-                model_path = f"{method['model_dir']}/{model_type_prefix}_{method['name']}_{resolution_str}_{timestamp}.keras"
-                best_model_path = f"{method['best_model_dir']}/{model_type_prefix}_{method['name']}_{resolution_str}_{timestamp}.keras"
-                
-                methods_for_training.append({
-                    'name': method['name'],
-                    'train_dir': f"{method['data_dir']}/train",
-                    'val_dir': f"{method['data_dir']}/val",
-                    'test_dir': f"{method['data_dir']}/test",
-                    'model_path': model_path,
-                    'best_model_path': best_model_path,
-                    'output_dir': method['output_dir'],
-                    'exe_time_dir': method['exe_time_dir']
-                })
-
-            for method in methods_for_training:
-                try:
-                    # Training
-                    print(f"\n[INFO] Starting {method['name']} method training with resolution {resolution_str}...")
-                    train_start = time.time()
-                    train_model(
-                        method['train_dir'],
-                        method['val_dir'],
-                        method['model_path'],
-                        method['best_model_path'],
-                        method['output_dir'],
-                        args.batch_size,
-                        args.epochs,
-                        target_height=target_height,
-                        target_width=target_width,
-                        three_class_mode=three_class_mode,
-                        distance_filter=distance_filter
-                    )
-                    train_duration = time.time() - train_start
-                    save_step_time(method['name'], f"Training_{resolution_str}", train_duration, timestamp, method['exe_time_dir'])
-                except Exception as e:
-                    print(f"[ERROR] {method['name']} training failed: {str(e)}")
+        # Track execution time
+        train_start_time = time.time()  # Reset this to the actual training start time
         
-        # Testing phase (if not skipped)
-        if not args.skip_testing:
-            # Set up methods for testing
-            methods_for_testing = []
-            for method in selected_methods:
-                # Use the most recent model for testing
-                model_type_prefix = "cnn_3d_three_class" if three_class_mode else "cnn_3d_binary"
-                best_model_path = f"{method['best_model_dir']}/{model_type_prefix}_{method['name']}_{resolution_str}_{timestamp}.keras"
+        for resolution_str in args.resolutions:
+            # Parse resolution
+            target_height, target_width = map(int, resolution_str.split('x'))
+            resolution_str = f"{target_height}x{target_width}"
+            print(f"\n====== Processing with resolution {resolution_str} ======")
+            
+            # Train each selected classification mode
+            for train_mode in args.train_modes:
+                # Train using each method 
+                # Set mode flags based on current mode
+                three_class_mode = train_mode == 'three_class'
+                eight_class_mode = train_mode == 'eight_class'
                 
-                methods_for_testing.append({
-                    'name': method['name'],
-                    'test_dir': f"{method['data_dir']}/test",
-                    'best_model_path': best_model_path,
-                    'output_dir': method['output_dir'],
-                    'exe_time_dir': method['exe_time_dir']
-                })
-                
-            for method in methods_for_testing:
-                try:
-                    # Testing
-                    print(f"\n[INFO] Starting {method['name']} method testing with resolution {resolution_str}...")
-                    test_start = time.time()
-                    test_model(
-                        test_dir=method['test_dir'],
-                        model_path=method['best_model_path'],
-                        batch_size=args.batch_size,
-                        output_base_dir=method['output_dir'],
-                        method_name=method['name'].lower(),
-                        target_height=target_height,
-                        target_width=target_width,
-                        three_class_mode=three_class_mode,
-                        distance_filter=distance_filter
-                    )
-                    test_duration = time.time() - test_start
-                    save_step_time(method['name'], f"Testing_{resolution_str}", test_duration, timestamp, method['exe_time_dir'])
-                except Exception as e:
-                    print(f"[ERROR] {method['name']} testing failed: {str(e)}")
+                methods_for_training = []
+                for method in selected_methods:
+                    # Set model type prefix based on classification mode
+                    if eight_class_mode:
+                        model_type_prefix = "cnn_3d_eight_class"
+                    elif three_class_mode:
+                        model_type_prefix = "cnn_3d_three_class"
+                    else:
+                        model_type_prefix = "cnn_3d_binary"
 
-   # Clear GPU memory between runs
+                    # Construct unique paths for each model using the timestamp from the beginning
+                    model_path = f"{method['model_dir']}/{model_type_prefix}_{method['name']}_{resolution_str}_{timestamp}.keras"
+                    best_model_path = f"{method['best_model_dir']}/{model_type_prefix}_{method['name']}_{resolution_str}_{timestamp}.keras"
+                    
+                    methods_for_training.append({
+                        'name': method['name'],
+                        'train_dir': f"{method['data_dir']}/train",
+                        'val_dir': f"{method['data_dir']}/val",
+                        'test_dir': f"{method['data_dir']}/test",
+                        'model_path': model_path,
+                        'best_model_path': best_model_path,
+                        'output_dir': method['output_dir'],
+                        'exe_time_dir': method['exe_time_dir']
+                    })
+                    
+                        
+                    
+                for method in methods_for_training:
+                        try:
+                            print(f"\n[INFO] Starting {train_mode} training for {method['name']} method with resolution {resolution_str}...")
+                            # Track execution time for this specific training
+                            method_train_start = time.time()
+                            
+                            # Train the model with appropriate mode flags
+                            train_model(
+                                method['train_dir'],
+                                method['val_dir'],
+                                model_path,
+                                best_model_path,
+                                method['output_dir'],
+                                args.batch_size,
+                                args.epochs,
+                                target_height=target_height,
+                                target_width=target_width,
+                                three_class_mode=three_class_mode,
+                                eight_class_mode=eight_class_mode, 
+                                distance_filter=distance_filter
+                            )
+                            
+                            # Calculate training duration for this method and save timing info
+                            method_train_duration = time.time() - method_train_start
+                            save_step_time(
+                                method['name'], 
+                                f"{train_mode}_Training_{resolution_str}", 
+                                method_train_duration, 
+                                timestamp, 
+                                method['exe_time_dir']
+                            )
+                            
+                            # Store model path for later testing
+                            method[f'{train_mode}_best_model_path'] = best_model_path
+                        
+                        except Exception as e:
+                            print(f"[ERROR] {method['name']} {train_mode} training failed: {str(e)}")
+                            import traceback
+                            traceback.print_exc()
+                    
+                # Clear GPU memory between training runs
+                clear_gpu_memory()
+
+    # Testing phase
+    if perform_testing:
+        print("\n\n" + "="*50)
+        print("TESTING PHASE")
+        print("="*50 + "\n")
+        
+        # Track execution time
+        test_start_time = time.time()  # Reset this to the actual testing start time
+        
+        for resolution_str in args.resolutions:
+            # Parse resolution
+            target_height, target_width = map(int, resolution_str.split('x'))
+            
+            # Test each selected classification mode
+            for test_mode in args.test_modes:
+                # Set mode flags based on current mode
+                three_class_mode = test_mode == 'three_class'
+                eight_class_mode = test_mode == 'eight_class'
+                
+                
+                # Set up methods for testing
+                methods_for_testing = []
+                # Test using each method 
+                for method in selected_methods:
+                    
+                    # Set model type prefix based on classification mode
+                    if eight_class_mode:
+                        model_type_prefix = "cnn_3d_eight_class"
+                    elif three_class_mode:
+                        model_type_prefix = "cnn_3d_three_class"
+                    else:
+                        model_type_prefix = "cnn_3d_binary"
+                        
+                    # Construct unique paths for each model using the timestamp from the beginning
+                    best_model_path = f"{method['best_model_dir']}/{model_type_prefix}_{method['name']}_{resolution_str}_{timestamp}.keras"
+                    
+                    methods_for_testing.append({
+                        'name': method['name'],
+                        'test_dir': f"{method['data_dir']}/test",
+                        'best_model_path': best_model_path,
+                        'output_dir': method['output_dir'],
+                        'exe_time_dir': method['exe_time_dir']
+                    })
+
+                for method in methods_for_testing:
+                    try:
+                        print(f"\n[INFO] Starting {test_mode} testing for {method['name']} method with resolution {resolution_str}...")
+                        # Track execution time for this specific testing
+                        method_test_start = time.time()
+                        
+                        # Test the model with appropriate mode flags
+                        test_model(
+                            test_dir=method['test_dir'],
+                            model_path=method['best_model_path'],
+                            batch_size=args.batch_size,
+                            output_base_dir=method['output_dir'],
+                            method_name=method['name'].lower(),
+                            target_height=target_height,
+                            target_width=target_width,
+                            three_class_mode=three_class_mode,
+                            eight_class_mode=eight_class_mode,
+                            distance_filter=distance_filter
+                        )
+                        
+                        # Calculate testing duration for this method and save timing info
+                        method_test_duration = time.time() - method_test_start
+                        save_step_time(
+                            method['name'], 
+                            f"{test_mode}_Testing_{resolution_str}", 
+                            method_test_duration, 
+                            timestamp, 
+                            method['exe_time_dir']
+                        )
+                        
+                    except Exception as e:
+                        print(f"[ERROR] {method['name']} {test_mode} testing failed: {str(e)}")
+                        import traceback
+                        traceback.print_exc()
+                    
+                    # Clear GPU memory between testing runs
+                    clear_gpu_memory()
+
+    # Calculate total training and testing duration only if those phases were performed
+    if perform_training:
+        total_train_duration = time.time() - train_start_time
+        save_step_time(
+            "Total", 
+            "Training", 
+            total_train_duration, 
+            timestamp, 
+            selected_methods[0]['exe_time_dir']
+        )
+    
+    if perform_testing:
+        total_test_duration = time.time() - test_start_time
+        save_step_time(
+            "Total", 
+            "Testing", 
+            total_test_duration, 
+            timestamp, 
+            selected_methods[0]['exe_time_dir']
+        )
+
+# Clear GPU memory between runs
 def clear_gpu_memory():
-       import tensorflow as tf
-       tf.keras.backend.clear_session()
-       import gc
-       gc.collect()
-   
-   # Call this between major operations
+    import tensorflow as tf
+    tf.keras.backend.clear_session()
+    import gc
+    gc.collect()
+
+# Call this between major operations
 
 if __name__ == "__main__":
     # Disable XLA and mixed precision

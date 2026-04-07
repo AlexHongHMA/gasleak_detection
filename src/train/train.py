@@ -2,13 +2,14 @@
 
 import os
 import tensorflow as tf
+import matplotlib.pyplot as plt
 from src.model.model import cnn_3d_model
-from src.loader.loader import DataGenerator, DataGeneratorThreeClass
+from src.loader.loader import DataGenerator, DataGeneratorThreeClass, DataGeneratorEightClass
 from tensorflow.keras.callbacks import (ModelCheckpoint, EarlyStopping, ReduceLROnPlateau)
 import datetime
 
 def train_model(train_dir, val_dir, model_save_path, best_model_path, output_base_dir, batch_size, epochs, 
-               target_height, target_width, three_class_mode=False, distance_filter=None):
+               target_height, target_width, three_class_mode=False, eight_class_mode=False, distance_filter=None):
     """
     Train a model for gas leak classification.
     
@@ -22,16 +23,28 @@ def train_model(train_dir, val_dir, model_save_path, best_model_path, output_bas
         epochs: Number of epochs to train
         target_height: Target image height
         target_width: Target image width
-        three_class_mode: If True, train for three-class classification (small/medium/large leaks),
-                          otherwise train for binary classification (leak/no-leak)
+        three_class_mode: If True, train for three-class classification (small/medium/large leaks)
+        eight_class_mode: If True, train for eight-class classification (all individual leak types)
         distance_filter: Filter data by imaging distance: '46' for 4.6m, '69' for 6.9m, or None for all data
     
     Returns:
         model: Trained model
         history: Training history
     """
-    mode_name = "three_class" if three_class_mode else "binary"
-    num_classes = 3 if three_class_mode else 2
+    # Handle mode priority if multiple are True
+    if eight_class_mode and three_class_mode:
+        print("[WARNING] Both eight_class_mode and three_class_mode are True. Eight-class mode will take precedence.")
+        three_class_mode = False
+        
+    if eight_class_mode:
+        mode_name = "eight_class"
+        num_classes = 8
+    elif three_class_mode:
+        mode_name = "three_class"
+        num_classes = 3
+    else:
+        mode_name = "binary"
+        num_classes = 2
     
     # Add distance information to mode name if a filter is applied
     distance_info = f"_distance_{distance_filter}m" if distance_filter else ""
@@ -41,12 +54,37 @@ def train_model(train_dir, val_dir, model_save_path, best_model_path, output_bas
     model = cnn_3d_model(input_shape=(15, target_height, target_width, 1), num_classes=num_classes)
     
     # 2) Create data generators - use appropriate generator based on mode
-    if three_class_mode:
+    if eight_class_mode:
+        # Eight-class mode
+        train_gen = DataGeneratorEightClass(
+            data_dir=train_dir,
+            batch_size=batch_size,
+            shuffle=True,
+            balance_classes=True,
+            training=True,
+            resize=True,
+            target_height=target_height,
+            target_width=target_width,
+            distance_filter=distance_filter
+        )
+        
+        val_gen = DataGeneratorEightClass(
+            data_dir=val_dir,
+            batch_size=batch_size,
+            shuffle=False,
+            balance_classes=False,
+            training=False,
+            resize=True,
+            target_height=target_height,
+            target_width=target_width,
+            distance_filter=distance_filter
+        )
+    elif three_class_mode:
         train_gen = DataGeneratorThreeClass(
             data_dir=train_dir,
             batch_size=batch_size,
             shuffle=True,
-            balance_classes=False,
+            balance_classes=True,
             training=True,
             resize=True,
             target_height=target_height,
@@ -117,10 +155,10 @@ def train_model(train_dir, val_dir, model_save_path, best_model_path, output_bas
     
     lr_scheduler_cb = ReduceLROnPlateau(
         monitor='val_loss',
-        factor=0.1,
+        factor=0.5,
         patience=5,
-        verbose=1,
-        min_lr=1e-7
+        min_lr=1e-7,
+        verbose=1
     )
     
     callbacks_list = [checkpoint_cb, earlystop_cb, lr_scheduler_cb]
@@ -165,6 +203,10 @@ def train_model(train_dir, val_dir, model_save_path, best_model_path, output_bas
             f.write("  - Class 0: Small Leak (original classes 0-2)\n")
             f.write("  - Class 1: Medium Leak (original classes 3-5)\n")
             f.write("  - Class 2: Large Leak (original classes 6-7)\n")
+        elif eight_class_mode:
+            f.write("Class Mapping:\n")
+            f.write("  - Class 0: No Leak\n")
+            f.write("  - Classes 1-7: Individual Leak Types\n")
         f.write(f"Loss: {results[0]:.4f}\n")
         f.write(f"Accuracy: {results[1]:.4f}\n")
     
@@ -193,6 +235,45 @@ def train_model(train_dir, val_dir, model_save_path, best_model_path, output_bas
             f.write("\n")
     
     print(f"[INFO] Training history saved to {history_file}")
+    
+    # 10) Generate and save training plots
+    try:
+        plots_dir = os.path.join(output_base_dir, "plots")
+        os.makedirs(plots_dir, exist_ok=True)
+        
+        plot_file = os.path.join(plots_dir, f"{mode_name}{distance_suffix}_learning_curves_{current_date}_{target_height}x{target_width}.png")
+        
+        # Create a figure with two subplots for accuracy and loss
+        plt.figure(figsize=(12, 5))
+        
+        # Plot training & validation accuracy
+        plt.subplot(1, 2, 1)
+        plt.plot(history.history['accuracy'], label='Training Accuracy')
+        plt.plot(history.history['val_accuracy'], label='Validation Accuracy')
+        plt.title('Model Accuracy')
+        plt.xlabel('Epoch')
+        plt.ylabel('Accuracy')
+        plt.legend(loc='lower right')
+        plt.grid(True)
+        
+        # Plot training & validation loss
+        plt.subplot(1, 2, 2)
+        plt.plot(history.history['loss'], label='Training Loss')
+        plt.plot(history.history['val_loss'], label='Validation Loss')
+        plt.title('Model Loss')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.legend(loc='upper right')
+        plt.grid(True)
+        
+        plt.tight_layout()
+        plt.savefig(plot_file, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        print(f"[INFO] Learning curves saved to {plot_file}")
+    except Exception as e:
+        print(f"[WARNING] Failed to generate learning curve plots: {str(e)}")
+        print("[INFO] Training completed successfully despite plotting error.")
     
     return model, history
 
